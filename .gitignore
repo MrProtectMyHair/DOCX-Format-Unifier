@@ -25,5 +25,5 @@ Thumbs.db
 venv/
 .venv/
 
-# Test outputs
-参考文件/test_output*.docx
+# Reference files (private, not committed)
+参考文件/
