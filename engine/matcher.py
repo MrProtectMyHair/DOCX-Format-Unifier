@@ -1,6 +1,7 @@
 """匹配引擎 — 标签匹配 + 顺序匹配"""
 
 import re
+from difflib import SequenceMatcher
 
 
 def match_paragraphs(input_data, template_data):
@@ -36,6 +37,11 @@ def match_paragraphs(input_data, template_data):
             matched_input.add(ii)
             matched_tmpl.add(best_ti)
 
+    # Phase 1.5: detect compound paragraphs — input text that contains
+    # labels for multiple unmatched template paragraphs
+    _split_compound_paragraphs(input_non_empty, tmpl_non_empty,
+                               matched_input, matched_tmpl, matches)
+
     # Phase 2: positional fallback
     unmatched_in = [(i, p) for i, p in input_non_empty if i not in matched_input]
     unmatched_tmpl = [(i, p) for i, p in tmpl_non_empty if i not in matched_tmpl]
@@ -53,6 +59,46 @@ def match_paragraphs(input_data, template_data):
         "para_matches": matches,
         "unmatched_input": unmatched_input_list,
     }
+
+
+def _split_compound_paragraphs(input_non_empty, tmpl_non_empty,
+                               matched_input, matched_tmpl, matches):
+    """检测已匹配输入段落的文本是否还包含未匹配模板段落的标签。
+
+    如输入"项目名称: XXXX   填表日期: YYYY"匹配到模板"项目名称"后，
+    检测到文本中还包含"填表日期"标签，模板中也有未匹配的"填表日期"段落，
+    则额外建立匹配。
+    """
+    unmatched_tmpl_labels = {}
+    for ti, tp in tmpl_non_empty:
+        if ti not in matched_tmpl:
+            lbl = _extract_label(tp["text"])
+            if lbl and len(lbl) >= 2:
+                unmatched_tmpl_labels[lbl] = ti
+
+    if not unmatched_tmpl_labels:
+        return
+
+    # 对每个已匹配的输入段落，扫描其中是否包含未匹配模板标签
+    for ii, ip in input_non_empty:
+        if ii not in matched_input:
+            continue
+        text = ip["text"]
+        for tmpl_label, ti in unmatched_tmpl_labels.items():
+            if ti in matched_tmpl:
+                continue
+            pos = text.find(tmpl_label)
+            if pos < 0:
+                continue
+            # 验证标签边界：前为空/行首/空白，后为冒号/空白
+            if pos > 0 and text[pos - 1] not in (' ', '\t', '\n'):
+                continue
+            after = pos + len(tmpl_label)
+            if after < len(text) and text[after] not in (':', '：', ' ', '\t', '\n'):
+                continue
+            # 找到复合匹配
+            matches.append((ii, ti))
+            matched_tmpl.add(ti)
 
 
 def match_tables(input_data, template_data):
@@ -139,6 +185,7 @@ def _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
         best_key = None
         best_score = 0.0
         best_dist = float("inf")
+        best_text_sim = 0.0
         for (tr, tc), tmpl_text in tmpl_cells.items():
             if (tr, tc) in matched_tmpl:
                 continue
@@ -149,9 +196,21 @@ def _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
             if score < 0.85:
                 continue
             dist = abs(ir - tr) + abs(ic - tc)
-            if score > best_score or (score == best_score and dist < best_dist):
+            text_sim = SequenceMatcher(None, in_text, tmpl_text).ratio()
+            # 三重排序：标签分 > 全文相似 > 位置近
+            # （全文相似优先于位置距离，因为输入和模板的行列结构可能不一致）
+            better = False
+            if score > best_score:
+                better = True
+            elif score == best_score:
+                if text_sim > best_text_sim:
+                    better = True
+                elif text_sim == best_text_sim and dist < best_dist:
+                    better = True
+            if better:
                 best_score = score
                 best_dist = dist
+                best_text_sim = text_sim
                 best_key = (tr, tc)
 
         if best_key is not None:

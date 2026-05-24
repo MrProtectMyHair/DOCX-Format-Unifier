@@ -26,27 +26,61 @@ def generate_output(template_path, input_data, template_data, para_matches, cell
 
 
 def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras):
-    """替换模板段落中的文本为输入文件的文本。"""
+    """替换模板段落中的文本为输入文件的文本。
+
+    当一个输入段落匹配到多个模板段落时（复合段落），按标签位置分割文本。
+    """
     input_paras = input_data["paragraphs"]
     tmpl_paras = template_data["paragraphs"]
+    from engine.matcher import _extract_label
 
-    # 建立模板索引 → 输入索引的映射
-    mapping = {ti: ii for ii, ti in para_matches}
+    # 建立: 模板索引 → 输入索引
+    tmpl_to_input = {ti: ii for ii, ti in para_matches}
+
+    # 检测复合段落：同一个输入索引对应多个模板段落
+    input_to_tmpls = {}
+    for ii, ti in para_matches:
+        if ii not in input_to_tmpls:
+            input_to_tmpls[ii] = []
+        input_to_tmpls[ii].append(ti)
+
+    # 计算切分映射: (input_idx, template_idx) -> text_subset
+    _split_map = {}
+    for ii, ti_list in input_to_tmpls.items():
+        if len(ti_list) <= 1:
+            continue
+        text = input_paras[ii]["text"]
+        label_positions = []
+        for ti2 in ti_list:
+            lbl = _extract_label(tmpl_paras[ti2]["text"])
+            if lbl:
+                pos = text.find(lbl)
+                if pos >= 0:
+                    label_positions.append((pos, lbl, ti2))
+        label_positions.sort()
+        for idx, (pos, lbl, ti2) in enumerate(label_positions):
+            start = pos
+            if idx + 1 < len(label_positions):
+                end = label_positions[idx + 1][0]
+            else:
+                end = len(text)
+            _split_map[(ii, ti2)] = text[start:end].strip()
 
     for ti, para in enumerate(doc.paragraphs):
-        if ti in mapping:
-            ii = mapping[ti]
-            new_text = input_paras[ii]["text"]
+        if ti in tmpl_to_input:
+            ii = tmpl_to_input[ti]
+            if (ii, ti) in _split_map:
+                new_text = _split_map[(ii, ti)]
+            else:
+                new_text = input_paras[ii]["text"]
             _set_paragraph_text(para, new_text)
 
     # 追加未匹配的输入段落
     unmatched_indices = [i for i in unmatched_paras if input_paras[i]["text"].strip()]
     for ii in unmatched_indices:
         new_text = input_paras[ii]["text"]
-        # 在文档末尾添加新段落，使用 Normal 样式
         last_para = doc.paragraphs[-1] if doc.paragraphs else None
         new_para = doc.add_paragraph(new_text)
-        # 保留一些基本的输入文件格式
         in_para = input_paras[ii]
         if in_para["font_name"]:
             for run in new_para.runs:
@@ -117,11 +151,25 @@ def _set_paragraph_text(para, text):
 
 
 def _set_cell_text(cell, text):
-    """设置单元格的文本，保留模板的字符格式。"""
-    if cell.paragraphs:
-        first_para = cell.paragraphs[0]
-        _set_paragraph_text(first_para, text)
-        # 清空其余段落
-        for para in cell.paragraphs[1:]:
-            _set_paragraph_text(para, "")
-    # 如果单元格无段落（罕见情况），不做处理
+    """设置单元格的文本，保留模板的字符格式。
+
+    按换行符拆分为多段，匹配模板的段落结构。
+    多余的空段落从 XML 中物理移除，避免空行占高。
+    """
+    parts = text.split("\n") if text else [""]
+    n_paras = len(cell.paragraphs)
+
+    # 填充前 N 个段落（N = min(len(parts), n_paras)）
+    for i, part in enumerate(parts):
+        if i < n_paras:
+            _set_paragraph_text(cell.paragraphs[i], part)
+        else:
+            # 输入文本的段数超过模板段落数，在末尾段落追加
+            _set_paragraph_text(cell.paragraphs[-1],
+                               cell.paragraphs[-1].text + "\n" + part)
+
+    # 移除多余的空段落（物理删除，而非仅置空）
+    for i in range(len(parts), n_paras):
+        para = cell.paragraphs[i]
+        p_elem = para._element
+        p_elem.getparent().remove(p_elem)
