@@ -18,14 +18,14 @@ from engine.writer import generate_output
 REF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "参考文件")
 
 
-def run_pipeline():
-    input_path = os.path.join(REF_DIR, "Reference Input.docx")
+def run_pipeline(input_name="Reference Input.docx"):
+    input_path = os.path.join(REF_DIR, input_name)
     tmpl_path = os.path.join(REF_DIR, "Reference Template.docx")
 
     if not os.path.exists(input_path):
-        return None, "Reference files not found"
+        return None, f"File not found: {input_name}"
     if not os.path.exists(tmpl_path):
-        return None, "Reference files not found"
+        return None, "Template file not found"
 
     input_data = read_docx(input_path)
     tmpl_data = read_docx(tmpl_path)
@@ -51,6 +51,7 @@ def run_pipeline():
             "output": out_data,
             "para_matches": para_result,
             "cell_matches": cell_result,
+            "name": input_name,
         }, None
     finally:
         if os.path.exists(output_path):
@@ -113,15 +114,20 @@ def check_no_extra_date(data):
 def check_time_order(data):
     """B3 regression: time slots in rows 7-9 should be in correct order."""
     out_tbl = data["output"]["tables"][0]
-    r7 = out_tbl["cells"]
-    cells_7_0 = [c for c in r7 if c["row"] == 7 and c["col"] == 0]
-    cells_8_0 = [c for c in r7 if c["row"] == 8 and c["col"] == 0]
+    cells_7_0 = [c for c in out_tbl["cells"] if c["row"] == 7 and c["col"] == 0]
+    cells_8_0 = [c for c in out_tbl["cells"] if c["row"] == 8 and c["col"] == 0]
     if not cells_7_0 or not cells_8_0:
         return True, "Skipped (cells not found)"
-    t7 = cells_7_0[0]["text"]
-    t8 = cells_8_0[0]["text"]
-    morning_first = ("8:00" in t7 or "8：00" in t7) and ("13:00" in t8 or "13：00" in t8)
-    return morning_first, f"Row7={t7[:20]}..., Row8={t8[:20]}..."
+
+    import re
+    def first_hour(text):
+        m = re.search(r'(\d{1,2})[：:]', text)
+        return int(m.group(1)) if m else -1
+
+    h7 = first_hour(cells_7_0[0]["text"])
+    h8 = first_hour(cells_8_0[0]["text"])
+    morning_first = (h7 >= 0 and h7 < 12) and (h8 >= 12)
+    return morning_first, f"Row7 hour={h7}, Row8 hour={h8}"
 
 
 CHECKS = [
@@ -138,20 +144,22 @@ def main():
     print("DOCX Format Unifier — Self Validation")
     print("=" * 50)
 
-    data, error = run_pipeline()
-    if error:
-        print(f"\nERROR: Could not run pipeline — {error}")
-        sys.exit(1)
-
     all_ok = True
-    for name, fn in CHECKS:
-        ok, msg = fn(data)
-        status = "PASS" if ok else "FAIL"
-        if not ok:
-            all_ok = False
-        print(f"  [{status}] {name}: {msg}")
+    for input_name in ["Reference Input.docx", "Reference Input V2.docx"]:
+        data, error = run_pipeline(input_name)
+        if error:
+            print(f"\n  [SKIP] {input_name}: {error}")
+            continue
 
-    print("-" * 50)
+        print(f"\n--- {data['name']} ---")
+        for check_name, fn in CHECKS:
+            ok, msg = fn(data)
+            status = "PASS" if ok else "FAIL"
+            if not ok:
+                all_ok = False
+            print(f"  [{status}] {check_name}: {msg}")
+
+    print("\n" + "-" * 50)
     if all_ok:
         print("  ALL CHECKS PASSED")
         sys.exit(0)

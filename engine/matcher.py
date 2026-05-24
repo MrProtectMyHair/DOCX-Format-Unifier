@@ -196,7 +196,11 @@ def _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
             if score < 0.85:
                 continue
             dist = abs(ir - tr) + abs(ic - tc)
-            text_sim = SequenceMatcher(None, in_text, tmpl_text).ratio()
+            text_sim = SequenceMatcher(
+                None, _normalize_text(in_text), _normalize_text(tmpl_text)
+            ).ratio()
+            # 时间感知加分：如果两段文本含有同一时段（上午/下午），+0.15
+            text_sim += _time_period_boost(in_text, tmpl_text)
             # 三重排序：标签分 > 全文相似 > 位置近
             # （全文相似优先于位置距离，因为输入和模板的行列结构可能不一致）
             better = False
@@ -220,6 +224,47 @@ def _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
             })
             matched_in.add((ir, ic))
             matched_tmpl.add(best_key)
+
+
+def _time_period_boost(text_a, text_b):
+    """如果两段文本属于同一时段（上午/下午），返回 +0.15 加分。
+
+    提取文本中的第一个时间 (HH:MM)，判断小时是否同时 < 12 或同时 >= 12。
+    用于区分 '4.11 09:00-12:00'（上午）与 '4.11 13:00-17:00'（下午）。
+    """
+    time_pat = re.compile(r'(\d{1,2})[：:](\d{2})')
+    def extract_hour(text):
+        match = time_pat.search(_normalize_text(text))
+        if match:
+            return int(match.group(1))
+        return None
+
+    hour_a = extract_hour(text_a)
+    hour_b = extract_hour(text_b)
+    if hour_a is not None and hour_b is not None:
+        if (hour_a < 12) == (hour_b < 12):
+            return 0.15
+    return 0.0
+
+
+def _normalize_text(text):
+    """标准化文本，将全角字符转为半角，提高 SequenceMatcher 比对精度。
+
+    例如 '8：00' (全角冒号) → '8:00' (半角)，使 '09:00-12:00'
+    能更准确地区分 '8:00' (上午) vs '13:00' (下午)。
+    """
+    result = []
+    for ch in text:
+        code = ord(ch)
+        if code == 0x3000:  # 全角空格 → 半角空格
+            result.append(' ')
+        elif 0xFF01 <= code <= 0xFF5E:  # 全角标点/字母/数字
+            result.append(chr(code - 0xFEE0))
+        elif 0xFF10 <= code <= 0xFF19:  # 全角数字 0-9
+            result.append(chr(code - 0xFEE0))
+        else:
+            result.append(ch)
+    return ''.join(result)
 
 
 def _extract_label(text):

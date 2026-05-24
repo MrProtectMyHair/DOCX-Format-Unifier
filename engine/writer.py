@@ -156,7 +156,11 @@ def _set_cell_text(cell, text):
     按换行符拆分为多段，匹配模板的段落结构。
     多余的空段落从 XML 中物理移除，避免空行占高。
     """
-    parts = text.split("\n") if text else [""]
+    # 按换行拆分，过滤空字符串（连续换行不产生空段落）
+    raw_parts = text.split("\n") if text else [""]
+    parts = [p for p in raw_parts if p.strip()]
+    if not parts:
+        parts = [""]
     n_paras = len(cell.paragraphs)
 
     # 填充前 N 个段落（N = min(len(parts), n_paras)）
