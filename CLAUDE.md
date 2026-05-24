@@ -37,6 +37,7 @@
    - 检查是否需要更新 `docs/` 中的相关规范文档（如算法变更需更新 `tech-spec.md`，UI 变更需更新 `design-spec.md`）
    - 及时做 git commit，提交信息用英文简述"做了什么、为什么"，方便随时回滚
    - commit 粒度：一个逻辑单元一个 commit（如一个模块完成、一个 bug 修复），不攒大量改动一次性提交
+   - **代码更改后必须重新打包 .exe**：对 `engine/`、`gui/` 或 `main.py` 的任何修改，必须在 commit 后重新运行 `pyinstaller DOCX_Format_Unifier.spec` 和 `pyinstaller DOCX_Format_Unifier_debug.spec`，更新 `dist/` 中的两个 .exe 文件，否则用户下载到本地的 exe 仍是旧版本
 
 ### 开发环境
 
