@@ -1,0 +1,127 @@
+"""DOCX 生成模块 — 以模板为骨架，替换文字内容"""
+
+import shutil
+from docx import Document
+
+
+def generate_output(template_path, input_data, template_data, para_matches, cell_matches, unmatched_paras, output_path):
+    """生成输出文件。
+
+    策略：复制模板文件，将输入文件的文字内容填入模板对应位置。
+    """
+    # 1. 复制模板文件
+    shutil.copy2(template_path, output_path)
+
+    # 2. 打开副本进行修改
+    doc = Document(output_path)
+
+    # 3. 替换段落文本
+    _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras)
+
+    # 4. 替换表格单元格文本
+    _replace_table_cells(doc, input_data, template_data, cell_matches)
+
+    # 5. 保存
+    doc.save(output_path)
+
+
+def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras):
+    """替换模板段落中的文本为输入文件的文本。"""
+    input_paras = input_data["paragraphs"]
+    tmpl_paras = template_data["paragraphs"]
+
+    # 建立模板索引 → 输入索引的映射
+    mapping = {ti: ii for ii, ti in para_matches}
+
+    for ti, para in enumerate(doc.paragraphs):
+        if ti in mapping:
+            ii = mapping[ti]
+            new_text = input_paras[ii]["text"]
+            _set_paragraph_text(para, new_text)
+
+    # 追加未匹配的输入段落
+    unmatched_indices = [i for i in unmatched_paras if input_paras[i]["text"].strip()]
+    for ii in unmatched_indices:
+        new_text = input_paras[ii]["text"]
+        # 在文档末尾添加新段落，使用 Normal 样式
+        last_para = doc.paragraphs[-1] if doc.paragraphs else None
+        new_para = doc.add_paragraph(new_text)
+        # 保留一些基本的输入文件格式
+        in_para = input_paras[ii]
+        if in_para["font_name"]:
+            for run in new_para.runs:
+                run.font.name = in_para["font_name"]
+        if in_para["font_size"]:
+            for run in new_para.runs:
+                run.font.size = in_para["font_size"]
+
+
+def _replace_table_cells(doc, input_data, template_data, cell_matches):
+    """替换模板表格单元格中的文本为输入文件的文本。
+
+    策略：为模板表格的每个单元格分配顺序 ID（与 reader 遍历顺序一致），
+    通过 ID 建立映射，在输出文档中以相同顺序遍历并替换。
+    此方法不依赖行列索引，天然处理合并单元格。
+    """
+    if not doc.tables or not cell_matches:
+        return
+
+    table = doc.tables[0]
+    in_tbl = input_data["tables"][0]
+    tmpl_tbl = template_data["tables"][0]
+
+    # 建立输入单元格的文本查找: (row, col) → text
+    in_cell_map = {}
+    for cell in in_tbl["cells"]:
+        in_cell_map[(cell["row"], cell["col"])] = cell["text"]
+
+    # 给模板每个单元格分配顺序 ID（与 reader 遍历顺序相同）
+    tmpl_pos_to_id = {}
+    tmpl_id = 0
+    for cell in tmpl_tbl["cells"]:
+        key = (cell["row"], cell["col"])
+        if key not in tmpl_pos_to_id:
+            tmpl_pos_to_id[key] = tmpl_id
+            tmpl_id += 1
+
+    # 建立: 模板顺序 ID → 替换文本
+    id_mapping = {}
+    for m in cell_matches:
+        in_key = (m["input_row"], m["input_col"])
+        tmpl_key = (m["tmpl_row"], m["tmpl_col"])
+        if in_key in in_cell_map and tmpl_key in tmpl_pos_to_id:
+            cell_id = tmpl_pos_to_id[tmpl_key]
+            id_mapping[cell_id] = in_cell_map[in_key]
+
+    # 按相同遍历顺序在输出文档中替换
+    out_id = 0
+    for row in table.rows:
+        for cell in row.cells:
+            if out_id in id_mapping:
+                _set_cell_text(cell, id_mapping[out_id])
+            out_id += 1
+
+
+def _set_paragraph_text(para, text):
+    """设置段落的文本，保留模板的字符格式。"""
+    # 保留第一个 run 的格式，用其承载全部文本
+    if para.runs:
+        # 将所有文本合并到第一个 run，清空其余 run
+        first_run = para.runs[0]
+        first_run.text = text
+        for run in para.runs[1:]:
+            run.text = ""
+    else:
+        # 没有 run 时添加一个
+        run = para.add_run(text)
+
+
+def _set_cell_text(cell, text):
+    """设置单元格的文本，保留模板的字符格式。"""
+    if cell.paragraphs:
+        first_para = cell.paragraphs[0]
+        _set_paragraph_text(first_para, text)
+        # 清空其余段落
+        for para in cell.paragraphs[1:]:
+            _set_paragraph_text(para, "")
+    # 如果单元格无段落（罕见情况），不做处理

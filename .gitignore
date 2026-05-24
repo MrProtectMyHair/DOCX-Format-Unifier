@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Claude
+.claude/
+
+# PyInstaller
+build/
+dist/
+*.spec
+*.manifest
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Virtual env
+venv/
+.venv/
+
+# Test outputs
+参考文件/test_output*.docx
