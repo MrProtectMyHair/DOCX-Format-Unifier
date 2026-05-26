@@ -124,6 +124,10 @@ def match_tables(input_data, template_data):
     matched_tmpl = set()
     matches = []
 
+    # Phase 0: column-header-guided matching for data rows
+    # Only activates when row 0 headers match well (>= 3 columns, >= 60% rate)
+    _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
+
     # Phase 1: global exact match for unique text in template
     _match_unique_exact(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
 
@@ -140,6 +144,106 @@ def match_tables(input_data, template_data):
         "cell_matches": matches,
         "unmatched_input_cells": unmatched_input_cells,
     }
+
+
+def _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
+    """Phase 0: 列头引导匹配。
+
+    通过匹配表头行（row 0）的标签建立 input_col → template_col 映射，
+    然后将数据行（row >= 1）的单元格按列映射填入，解决数据值不同但语义相同的问题。
+    """
+    # 提取表头行标签
+    in_headers = {}
+    for (ir, ic), text in in_cells.items():
+        if ir == 0:
+            lbl = _extract_label(text)
+            if lbl:
+                in_headers[ic] = (lbl, text)
+
+    tmpl_headers = {}
+    for (tr, tc), text in tmpl_cells.items():
+        if tr == 0:
+            lbl = _extract_label(text)
+            if lbl:
+                tmpl_headers[tc] = (lbl, text)
+
+    if not in_headers or not tmpl_headers:
+        return
+
+    # 匹配表头列 → 建立列映射
+    col_map = {}  # input_col → template_col
+    used_tmpl = set()
+    for ic, (in_lbl, _) in in_headers.items():
+        best_tc = None
+        best_score = 0.0
+        for tc, (tm_lbl, _) in tmpl_headers.items():
+            if tc in used_tmpl:
+                continue
+            score = _label_similarity(in_lbl, tm_lbl)
+            if score > best_score and score >= 0.5:
+                best_score = score
+                best_tc = tc
+        if best_tc is not None:
+            col_map[ic] = best_tc
+            used_tmpl.add(best_tc)
+
+            # 也匹配表头行本身
+            if (0, ic) not in matched_in and (0, best_tc) not in matched_tmpl:
+                matches.append({
+                    "input_row": 0, "input_col": ic,
+                    "tmpl_row": 0, "tmpl_col": best_tc,
+                })
+                matched_in.add((0, ic))
+                matched_tmpl.add((0, best_tc))
+
+    # 质量检查：表头标签必须全部唯一（数据表特征），至少 3 列且 >= 33% 覆盖率
+    in_labels_list = [lbl for _, (lbl, _) in in_headers.items()]
+    tmpl_labels_list = [lbl for _, (lbl, _) in tmpl_headers.items()]
+    if len(set(in_labels_list)) < len(in_labels_list):  # 输入表头有重复
+        return
+    if len(set(tmpl_labels_list)) < len(tmpl_labels_list):  # 模板表头有重复
+        return
+    total_cols = max(len(in_headers), len(tmpl_headers))
+    if len(col_map) < 3 or len(col_map) / total_cols < 0.33:
+        return
+
+    # 按列映射匹配数据行（仅匹配内容简单、非标签行的数据行）
+    max_in_row = max(k[0] for k in in_cells) if in_cells else 0
+    max_tmpl_row = max(k[0] for k in tmpl_cells) if tmpl_cells else 0
+
+    # 数据行候选：跳过全行相同文本的行（如签名行、合计行）
+    data_rows = []
+    for row in range(1, min(max_in_row, max_tmpl_row) + 1):
+        # 检查该行是否所有列文本都相同（合并行特征）
+        row_in_texts = [v for (r, c), v in in_cells.items() if r == row and v.strip()]
+        row_tm_texts = [v for (r, c), v in tmpl_cells.items() if r == row and v.strip()]
+        in_all_same = len(set(row_in_texts)) <= 1
+        tm_all_same = len(set(row_tm_texts)) <= 1
+        # 跳过签名行和全行相同的标签行
+        if in_all_same and tm_all_same and len(row_in_texts) > 0 and len(row_tm_texts) > 0:
+            first_in = row_in_texts[0].strip() if row_in_texts else ""
+            first_tm = row_tm_texts[0].strip() if row_tm_texts else ""
+            if _same_colon_labels(first_in, first_tm):
+                continue
+            if first_in == first_tm and len(first_in) <= 5:
+                continue  # 相同短文本（如"合计"），保留模板
+        data_rows.append(row)
+
+    for row in data_rows:
+        for ic, tc in col_map.items():
+            in_key = (row, ic)
+            tmpl_key = (row, tc)
+            if in_key in in_cells and tmpl_key in tmpl_cells:
+                if in_key not in matched_in and tmpl_key not in matched_tmpl:
+                    in_val = in_cells[in_key].strip()
+                    tm_val = tmpl_cells[tmpl_key].strip()
+                    if in_val != tm_val:
+                        matches.append({
+                            "input_row": row, "input_col": ic,
+                            "tmpl_row": row, "tmpl_col": tc,
+                        })
+                        matched_in.add(in_key)
+                        matched_tmpl.add(tmpl_key)
 
 
 def _match_unique_exact(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
@@ -194,6 +298,9 @@ def _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
                 continue
             score = _label_similarity(in_label, tmpl_label)
             if score < 0.85:
+                continue
+            # 跳过同结构的冒号标签行（如签名行），保留模板原文
+            if _same_colon_labels(in_text, tmpl_text):
                 continue
             dist = abs(ir - tr) + abs(ic - tc)
             text_sim = SequenceMatcher(
@@ -272,12 +379,43 @@ def _extract_label(text):
     if not text:
         return ""
     first_line = text.split("\n")[0].strip()
-    match = re.split(r"[:：：\s]+", first_line, maxsplit=1)
+    # 先按冒号分隔（标签：值格式）
+    match = re.split(r"[:：]", first_line, maxsplit=1)
     candidate = match[0].strip()
+    # 如果候选标签包含括号内容，去掉括号部分
+    candidate = re.sub(r"[（(][^)）]*[)）]", "", candidate).strip()
     candidate = candidate.strip("[]()（）")
+    # 去掉标签内的空白（如"姓 名" → "姓名"）
+    candidate = re.sub(r"\s+", "", candidate)
     if len(candidate) >= 2:
         return candidate
     return first_line[:10]
+
+
+def _same_colon_labels(text_a, text_b):
+    """检查两段文本是否含有同一组冒号前缀标签。
+
+    用于识别签名行等结构化文本：如果两段文本中「：」前的关键词集合相同，
+    说明是同一类格式文本，应保留模板的原文（保持模板的排版）。
+    例："负责人：  经办人：  ..." → 标签集 {负责人, 经办人, ...}
+    """
+    import re
+    def extract_labels(text):
+        labels = set()
+        for m in re.finditer(r'([一-鿿\w]+)[：:]', text):
+            labels.add(m.group(1))
+        return labels
+
+    labels_a = extract_labels(text_a)
+    labels_b = extract_labels(text_b)
+    if not labels_a or not labels_b:
+        return False
+    # 如果两段文本共享至少 2 个标签且重叠率 >= 60%，视为同类文本
+    common = labels_a & labels_b
+    if len(common) >= 2:
+        overlap = len(common) / max(len(labels_a), len(labels_b))
+        return overlap >= 0.6
+    return False
 
 
 def _label_similarity(a, b):

@@ -73,6 +73,9 @@ def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_
                 new_text = _split_map[(ii, ti)]
             else:
                 new_text = input_paras[ii]["text"]
+            # 如果输入段落含「标签：值」格式但模板段落只有值（无标签），剥离标签
+            new_text = _strip_label_if_template_has_none(
+                new_text, tmpl_paras[ti]["text"])
             _set_paragraph_text(para, new_text)
 
     # 追加未匹配的输入段落
@@ -177,3 +180,23 @@ def _set_cell_text(cell, text):
         para = cell.paragraphs[i]
         p_elem = para._element
         p_elem.getparent().remove(p_elem)
+
+
+def _strip_label_if_template_has_none(input_text, template_text):
+    """如果输入含「标签：值」但模板不含该标签，则剥离输入的标签部分。
+
+    例：输入 "填表及制发日期: 2026.4.1"，模板 "2026.4.1"
+    → 返回 "2026.4.1"
+    """
+    from engine.matcher import _extract_label
+    in_label = _extract_label(input_text)
+
+    if not in_label or len(in_label) < 2:
+        return input_text
+    # 检查模板是否包含输入的标签（作为独立词出现）
+    if in_label not in template_text:
+        import re
+        m = re.search(r'[:：]\s*(.+)', input_text)
+        if m:
+            return m.group(1).strip()
+    return input_text

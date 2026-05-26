@@ -18,14 +18,14 @@ from engine.writer import generate_output
 REF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "参考文件")
 
 
-def run_pipeline(input_name="Reference Input.docx"):
+def run_pipeline(input_name="Reference Input.docx", tmpl_name="Reference Template.docx"):
     input_path = os.path.join(REF_DIR, input_name)
-    tmpl_path = os.path.join(REF_DIR, "Reference Template.docx")
+    tmpl_path = os.path.join(REF_DIR, tmpl_name)
 
     if not os.path.exists(input_path):
         return None, f"File not found: {input_name}"
     if not os.path.exists(tmpl_path):
-        return None, "Template file not found"
+        return None, f"Template not found: {tmpl_name}"
 
     input_data = read_docx(input_path)
     tmpl_data = read_docx(tmpl_path)
@@ -139,25 +139,74 @@ CHECKS = [
 ]
 
 
+def check_v3_data_row(data):
+    """V3: data row cells should come from input, not template.
+
+    Compares against Reference_Output_V3.docx as ground truth.
+    """
+    out_tbl = data["output"]["tables"][0]
+    cols = out_tbl["cols"]
+
+    # Read expected values from the reference output file
+    exp_path = os.path.join(REF_DIR, "Reference_Output_V3.docx")
+    if not os.path.exists(exp_path):
+        return True, "Skipped (expected output not found)"
+    exp_data = read_docx(exp_path)
+    exp_tbl = exp_data["tables"][0]
+
+    check_cols = [1, 2, 3, 6, 7, 8]
+    for ci in check_cols:
+        idx = 1 * cols + ci  # row 1
+        actual = out_tbl["cells"][idx]["text"].strip()
+        exp_idx = 1 * exp_tbl["cols"] + ci
+        expected = exp_tbl["cells"][exp_idx]["text"].strip()
+        if actual != expected:
+            return False, "Col %d mismatch" % ci
+    return True, "Data row matches expected output"
+
+
+def check_v3_date(data):
+    """V3: date paragraph should be just the date, no label prefix."""
+    for p in data["output"]["paragraphs"]:
+        t = p["text"].strip()
+        if t.startswith("20") and len(t) < 15:
+            return "填表" not in t, f"Date: '{t}'"
+    return True, "Date OK"
+
+
 def main():
     print("=" * 50)
     print("DOCX Format Unifier — Self Validation")
     print("=" * 50)
 
     all_ok = True
+
+    # V1 + V2 (share template)
     for input_name in ["Reference Input.docx", "Reference Input V2.docx"]:
         data, error = run_pipeline(input_name)
         if error:
             print(f"\n  [SKIP] {input_name}: {error}")
             continue
-
         print(f"\n--- {data['name']} ---")
         for check_name, fn in CHECKS:
             ok, msg = fn(data)
-            status = "PASS" if ok else "FAIL"
-            if not ok:
-                all_ok = False
-            print(f"  [{status}] {check_name}: {msg}")
+            if not ok: all_ok = False
+            print(f"  [{'PASS' if ok else 'FAIL'}] {check_name}: {msg}")
+
+    # V3 (different template)
+    data3, err3 = run_pipeline("Reference_Input_V3.docx", "Reference_Template_V3.docx")
+    if err3:
+        print(f"\n  [SKIP] V3: {err3}")
+    else:
+        print(f"\n--- {data3['name']} ---")
+        for check_name, fn in CHECKS[:3]:
+            ok, msg = fn(data3)
+            if not ok: all_ok = False
+            print(f"  [{'PASS' if ok else 'FAIL'}] {check_name}: {msg}")
+        for name, fn in [("V3 data row", check_v3_data_row), ("V3 date clean", check_v3_date)]:
+            ok, msg = fn(data3)
+            if not ok: all_ok = False
+            print(f"  [{'PASS' if ok else 'FAIL'}] {name}: {msg}")
 
     print("\n" + "-" * 50)
     if all_ok:

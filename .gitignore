@@ -25,5 +25,6 @@ Thumbs.db
 venv/
 .venv/
 
-# Reference files (private, not committed)
-参考文件/
+# Reference files — only keep Reference*.docx, ignore everything else
+参考文件/*
+!参考文件/Reference*.docx
