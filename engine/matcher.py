@@ -101,7 +101,7 @@ def _split_compound_paragraphs(input_non_empty, tmpl_non_empty,
             matched_tmpl.add(ti)
 
 
-def match_tables(input_data, template_data):
+def match_tables(input_data, template_data, cell_config=None):
     if not input_data["tables"] or not template_data["tables"]:
         return {"cell_matches": [], "unmatched_input_cells": []}
 
@@ -119,6 +119,10 @@ def match_tables(input_data, template_data):
         text = cell["text"].strip()
         if text:
             tmpl_cells[(cell["row"], cell["col"])] = text
+
+    # 如果用户提供了手动映射配置，直接使用
+    if cell_config is not None:
+        return _match_by_cell_config(in_cells, tmpl_cells, cell_config)
 
     matched_in = set()
     matched_tmpl = set()
@@ -144,6 +148,28 @@ def match_tables(input_data, template_data):
         "cell_matches": matches,
         "unmatched_input_cells": unmatched_input_cells,
     }
+
+
+def _match_by_cell_config(in_cells, tmpl_cells, cell_config):
+    """按用户手动配置的 cell_config 生成匹配结果。
+
+    cell_config: {(tmpl_row, tmpl_col): (in_row, in_col) or None}
+    None = 保留模板原文，不生成匹配。
+    """
+    matches = []
+    matched_in = set()
+    for (tr, tc), src in cell_config.items():
+        if src is None:
+            continue  # 保留模板
+        ir, ic = src
+        if (ir, ic) in in_cells and (tr, tc) in tmpl_cells:
+            matches.append({
+                "input_row": ir, "input_col": ic,
+                "tmpl_row": tr, "tmpl_col": tc,
+            })
+            matched_in.add((ir, ic))
+    unmatched = [{"row": r, "col": c} for (r, c) in in_cells if (r, c) not in matched_in]
+    return {"cell_matches": matches, "unmatched_input_cells": unmatched}
 
 
 def _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
