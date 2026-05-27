@@ -3,6 +3,21 @@
 import re
 from difflib import SequenceMatcher
 
+# 常见标题字段 — 这些文本在模板和输入中都是字段名，应保留模板原文
+FIELD_LABELS = {
+    "序号", "姓名", "性 名", "性别", "学历", "职称", "职务",
+    "身份证号", "身份证号码", "银行卡号", "银行账号", "开户行",
+    "开户行支行", "联系方式", "联系电话", "手机号",
+    "事由", "授课名称", "讲座名称", "课时数", "总金额",
+    "申报类别", "培训类型", "培训内容", "培训需求学院",
+    "专家类型", "专家信息", "专家职称", "专家简介",
+    "时段", "时间", "内容", "实施方式", "培训目标",
+    "专家课酬", "食宿安排", "辅导对象", "项目名称", "填表日期",
+    "申报项目", "课程名称", "申报日期", "负责人", "经办人",
+    "分管负责人", "审核人", "审批人",
+    "辅导对象", "及人数",
+}
+
 
 def match_paragraphs(input_data, template_data):
     input_paras = input_data["paragraphs"]
@@ -255,6 +270,10 @@ def _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
                 continue  # 相同短文本（如"合计"），保留模板
         data_rows.append(row)
 
+    # 收集表头标签用于字段检测
+    in_lbls = {lbl for _, (lbl, _) in in_headers.items()}
+    tm_lbls = {lbl for _, (lbl, _) in tmpl_headers.items()}
+
     for row in data_rows:
         for ic, tc in col_map.items():
             in_key = (row, ic)
@@ -264,6 +283,9 @@ def _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
                     in_val = in_cells[in_key].strip()
                     tm_val = tmpl_cells[tmpl_key].strip()
                     if in_val != tm_val:
+                        # 跳过字段标签（保留模板原文）
+                        if _is_field_label(tm_val, row, in_lbls, tm_lbls):
+                            continue
                         matches.append({
                             "input_row": row, "input_col": ic,
                             "tmpl_row": row, "tmpl_col": tc,
@@ -327,6 +349,9 @@ def _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
                 continue
             # 跳过同结构的冒号标签行（如签名行），保留模板原文
             if _same_colon_labels(in_text, tmpl_text):
+                continue
+            # 跳过字段标签（如姓名、职称），保留模板原文
+            if _is_field_label(tmpl_text, tr):
                 continue
             dist = abs(ir - tr) + abs(ic - tc)
             text_sim = SequenceMatcher(
@@ -416,6 +441,29 @@ def _extract_label(text):
     if len(candidate) >= 2:
         return candidate
     return first_line[:10]
+
+
+def _is_field_label(text, row, in_headers=None, tmpl_headers=None):
+    """判断该单元格是否为字段标签（应保留模板原文）。
+
+    条件：文本在常见字段列表中，或出现在表头行，或输入和模板内容相同。
+    """
+    if not text or not text.strip():
+        return False
+    clean = text.strip().replace("\n", "").replace(" ", "")
+    # 1. 在已知字段列表中
+    if clean in FIELD_LABELS:
+        return True
+    # 2. 文本出现在表头行
+    if in_headers:
+        for lbl in in_headers:
+            if clean and lbl and clean in lbl:
+                return True
+    if tmpl_headers:
+        for lbl in tmpl_headers:
+            if clean and lbl and clean in lbl:
+                return True
+    return False
 
 
 def _same_colon_labels(text_a, text_b):

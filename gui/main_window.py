@@ -12,12 +12,19 @@ from engine.writer import generate_output
 from gui.mapping_dialog import MappingDialog
 
 
+BTN_BLUE = "#1E90FF"
+
+
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("DOCX 格式统一工具")
-        self.geometry("700x520")
-        self.minsize(600, 400)
+        self.geometry("750x560")
+        self.minsize(650, 440)
+        self._f_title = ctk.CTkFont(family="SimHei", size=20, weight="bold")
+        self._f_label = ctk.CTkFont(family="SimHei", size=13)
+        self._f_log = ctk.CTkFont(family="SimHei", size=12)
+        self._f_status = ctk.CTkFont(family="SimHei", size=11)
 
         self.input_path = ctk.StringVar()
         self.template_path = ctk.StringVar()
@@ -35,7 +42,7 @@ class MainWindow(ctk.CTk):
 
         title_label = ctk.CTkLabel(
             main_frame, text="DOCX 格式统一工具",
-            font=ctk.CTkFont(size=18, weight="bold")
+            font=self._f_title
         )
         title_label.pack(pady=(0, 20))
 
@@ -49,8 +56,7 @@ class MainWindow(ctk.CTk):
         log_frame = ctk.CTkFrame(main_frame)
         log_frame.pack(fill="both", expand=True, padx=10, pady=(15, 10))
 
-        self.log_text = ctk.CTkTextbox(log_frame, font=ctk.CTkFont(size=11),
-                                        wrap="word")
+        self.log_text = ctk.CTkTextbox(log_frame, font=self._f_log, wrap="word")
         self.log_text.pack(fill="both", expand=True, padx=2, pady=2)
 
         btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -58,8 +64,10 @@ class MainWindow(ctk.CTk):
 
         self.mapping_btn = ctk.CTkButton(
             btn_frame, text="手动调整映射",
-            fg_color="transparent", border_width=1,
+            fg_color=BTN_BLUE, border_width=0,
+            text_color="white",
             width=130, height=36,
+            font=self._f_label,
             command=self._on_mapping
         )
         self.mapping_btn.pack(side="left")
@@ -67,6 +75,7 @@ class MainWindow(ctk.CTk):
         self.convert_btn = ctk.CTkButton(
             btn_frame, text="开始转换",
             width=120, height=36,
+            font=self._f_label,
             state="disabled",
             command=self._on_convert
         )
@@ -75,9 +84,9 @@ class MainWindow(ctk.CTk):
         self.status_var = ctk.StringVar(value="就绪")
         status_bar = ctk.CTkLabel(
             self, textvariable=self.status_var,
-            font=ctk.CTkFont(size=10), anchor="w",
+            font=ctk.CTkFont(family="SimHei", size=11), anchor="w",
             fg_color=("gray90", "gray17"),
-            corner_radius=0, height=22
+            corner_radius=0, height=24
         )
         status_bar.pack(fill="x", side="bottom")
 
@@ -89,16 +98,19 @@ class MainWindow(ctk.CTk):
 
     def _add_file_row(self, parent, label_text, path_var, row):
         row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        row_frame.pack(fill="x", pady=4)
+        row_frame.pack(fill="x", pady=5)
 
-        label = ctk.CTkLabel(row_frame, text=label_text, width=80, anchor="e")
+        label = ctk.CTkLabel(row_frame, text=label_text, width=80, anchor="e",
+                             font=self._f_label)
         label.pack(side="left", padx=(0, 8))
 
-        entry = ctk.CTkEntry(row_frame, textvariable=path_var)
+        entry = ctk.CTkEntry(row_frame, textvariable=path_var,
+                             font=self._f_label)
         entry.pack(side="left", fill="x", expand=True)
 
         browse_btn = ctk.CTkButton(
-            row_frame, text="浏览", width=55, height=30,
+            row_frame, text="浏览", width=60, height=32,
+            font=self._f_label,
             command=lambda p=path_var, idx=row: self._on_browse(p, idx)
         )
         browse_btn.pack(side="left", padx=(6, 0))
