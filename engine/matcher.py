@@ -227,16 +227,14 @@ def _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
             col_map[ic] = best_tc
             used_tmpl.add(best_tc)
 
-            # 也匹配表头行本身（跳过字段标签）
-            tmpl_hdr_text = tmpl_cells.get((0, best_tc), "")
-            if not _is_field_label(tmpl_hdr_text, 0):
-                if (0, ic) not in matched_in and (0, best_tc) not in matched_tmpl:
-                    matches.append({
-                        "input_row": 0, "input_col": ic,
-                        "tmpl_row": 0, "tmpl_col": best_tc,
-                    })
-                    matched_in.add((0, ic))
-                    matched_tmpl.add((0, best_tc))
+            # 也匹配表头行本身
+            if (0, ic) not in matched_in and (0, best_tc) not in matched_tmpl:
+                matches.append({
+                    "input_row": 0, "input_col": ic,
+                    "tmpl_row": 0, "tmpl_col": best_tc,
+                })
+                matched_in.add((0, ic))
+                matched_tmpl.add((0, best_tc))
 
     # 质量检查：表头标签必须全部唯一（数据表特征），至少 3 列且 >= 33% 覆盖率
     in_labels_list = [lbl for _, (lbl, _) in in_headers.items()]
@@ -284,9 +282,6 @@ def _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
                     in_val = in_cells[in_key].strip()
                     tm_val = tmpl_cells[tmpl_key].strip()
                     if in_val != tm_val:
-                        # 跳过字段标签（保留模板原文）
-                        if _is_field_label(tm_val, row, in_lbls, tm_lbls):
-                            continue
                         matches.append({
                             "input_row": row, "input_col": ic,
                             "tmpl_row": row, "tmpl_col": tc,
@@ -351,8 +346,8 @@ def _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
             # 跳过同结构的冒号标签行（如签名行），保留模板原文
             if _same_colon_labels(in_text, tmpl_text):
                 continue
-            # 跳过字段标签（如姓名、职称），保留模板原文
-            if _is_field_label(tmpl_text, tr):
+            # 阻止不同类型的纯数字串交叉匹配（身份证 vs 银行卡）
+            if _digit_type(in_text) != _digit_type(tmpl_text):
                 continue
             dist = abs(ir - tr) + abs(ic - tc)
             text_sim = SequenceMatcher(
@@ -489,6 +484,29 @@ def _same_colon_labels(text_a, text_b):
         overlap = len(common) / max(len(labels_a), len(labels_b))
         return overlap >= 0.6
     return False
+
+
+def _digit_type(text):
+    """识别纯数字串类型：'id'=身份证, 'card'=银行卡, 'unknown'=其他。
+
+    身份证特征：18 位 + 第 7-14 位为合法日期 (YYYYMMDD)。
+    银行卡特征：16-19 位纯数字但不符合身份证日期特征。
+    """
+    if not text:
+        return 'unknown'
+    clean = re.sub(r'\D', '', text)
+    if len(clean) == 18:
+        try:
+            bdate = clean[6:14]
+            y, m, d = int(bdate[:4]), int(bdate[4:6]), int(bdate[6:8])
+            if 1900 <= y <= 2100 and 1 <= m <= 12 and 1 <= d <= 31:
+                return 'id'
+        except (ValueError, IndexError):
+            pass
+        return 'card'
+    if 16 <= len(clean) <= 19:
+        return 'card'
+    return 'unknown'
 
 
 def _label_similarity(a, b):

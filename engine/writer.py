@@ -24,6 +24,9 @@ def generate_output(template_path, input_data, template_data, para_matches, cell
     # 4. 替换表格单元格文本
     _replace_table_cells(doc, input_data, template_data, cell_matches)
 
+    # 4.5. 空值填充：模板空单元格 ← 邻近标签对应的输入值
+    _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches)
+
     # 5. 保存
     try:
         doc.save(output_path)
@@ -186,6 +189,89 @@ def _set_cell_text(cell, text):
         para = cell.paragraphs[i]
         p_elem = para._element
         p_elem.getparent().remove(p_elem)
+
+
+def _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches):
+    """空值填充：模板中的空单元格 ← 邻近标签对应的输入值。
+
+    对模板每个空单元格，向左/上找最近的已匹配标签，
+    用同样行列偏移在输入侧找到对应值，填入。
+    """
+    if not doc.tables or not cell_matches:
+        return
+    table = doc.tables[0]
+    in_tbl = input_data["tables"][0]
+    tmpl_tbl = template_data["tables"][0]
+
+    # 输入单元格查找
+    in_cell_map = {}
+    for cell in in_tbl["cells"]:
+        in_cell_map[(cell["row"], cell["col"])] = cell["text"]
+
+    # 模板单元格查找（含空单元格）
+    tmpl_cell_map = {}
+    for cell in tmpl_tbl["cells"]:
+        tmpl_cell_map[(cell["row"], cell["col"])] = cell["text"]
+
+    # 模板顺序 ID 映射（与 _replace_table_cells 同序）
+    tmpl_pos_to_id = {}
+    seq = 0
+    for cell in tmpl_tbl["cells"]:
+        k = (cell["row"], cell["col"])
+        if k not in tmpl_pos_to_id:
+            tmpl_pos_to_id[k] = seq
+            seq += 1
+
+    # 已匹配标签: template (r,c) → input (r,c)
+    label_map = {}
+    for m in cell_matches:
+        label_map[(m["tmpl_row"], m["tmpl_col"])] = (m["input_row"], m["input_col"])
+
+    # 扫描模板空单元格
+    for (tr, tc), tm_text in tmpl_cell_map.items():
+        if tm_text.strip():
+            continue
+
+        # 找最近的已匹配标签：先向左，再向上
+        label_key = None
+        for scan_c in range(tc - 1, -1, -1):
+            if (tr, scan_c) in label_map:
+                label_key = (tr, scan_c)
+                break
+        if label_key is None:
+            for scan_r in range(tr - 1, -1, -1):
+                if (scan_r, tc) in label_map:
+                    label_key = (scan_r, tc)
+                    break
+        if label_key is None:
+            continue
+
+        # 计算偏移
+        d_row = tr - label_key[0]
+        d_col = tc - label_key[1]
+
+        # 输入侧取对应值
+        in_label = label_map[label_key]
+        in_val_key = (in_label[0] + d_row, in_label[1] + d_col)
+        if in_val_key not in in_cell_map:
+            continue
+        in_val = in_cell_map[in_val_key].strip()
+        if not in_val:
+            continue
+        # 防止把输入侧的标签当值填入
+        if in_val_key in label_map.values():
+            continue
+
+        # 在输出文档中找到对应单元格并填入
+        cell_id = tmpl_pos_to_id.get((tr, tc))
+        if cell_id is None:
+            continue
+        out_id = 0
+        for row in table.rows:
+            for cell in row.cells:
+                if out_id == cell_id:
+                    _set_cell_text(cell, in_val)
+                out_id += 1
 
 
 def _strip_label_if_template_has_none(input_text, template_text):
