@@ -144,7 +144,9 @@ def _replace_table_cells(doc, input_data, template_data, cell_matches):
     for row in table.rows:
         for cell in row.cells:
             if out_id in id_mapping:
-                _set_cell_text(cell, id_mapping[out_id])
+                # 跳过签章/行政类单元格
+                if not _has_skip_keyword(cell.text):
+                    _set_cell_text(cell, id_mapping[out_id])
             out_id += 1
 
 
@@ -191,11 +193,23 @@ def _set_cell_text(cell, text):
         p_elem.getparent().remove(p_elem)
 
 
-def _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches):
-    """空值填充：模板中的空单元格 ← 邻近标签对应的输入值。
+# 签章/行政类标签 — 其右侧空单元格不需要填值
+_SKIP_LABELS = {"签字", "盖章", "审批", "审核", "日期", "负责人", "经办人", "分管"}
 
-    对模板每个空单元格，向左/上找最近的已匹配标签，
-    用同样行列偏移在输入侧找到对应值，填入。
+
+def _has_skip_keyword(text):
+    """判断文本是否包含签章/行政类关键词。"""
+    for kw in _SKIP_LABELS:
+        if kw in text:
+            return True
+    return False
+
+
+def _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches):
+    """标签领地填充：每个匹配标签管辖其到下一个标签之间的空单元格。
+
+    领地内所有空单元格填入该标签在输入侧的第一个值 (d_col=1)。
+    遇到输入值越界或撞到其他标签时，回退到最近的有效值。
     """
     if not doc.tables or not cell_matches:
         return
@@ -208,12 +222,12 @@ def _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches):
     for cell in in_tbl["cells"]:
         in_cell_map[(cell["row"], cell["col"])] = cell["text"]
 
-    # 模板单元格查找（含空单元格）
+    # 模板单元格查找
     tmpl_cell_map = {}
     for cell in tmpl_tbl["cells"]:
         tmpl_cell_map[(cell["row"], cell["col"])] = cell["text"]
 
-    # 模板顺序 ID 映射（与 _replace_table_cells 同序）
+    # 模板顺序 ID 映射
     tmpl_pos_to_id = {}
     seq = 0
     for cell in tmpl_tbl["cells"]:
@@ -227,51 +241,158 @@ def _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches):
     for m in cell_matches:
         label_map[(m["tmpl_row"], m["tmpl_col"])] = (m["input_row"], m["input_col"])
 
-    # 扫描模板空单元格
+    # 收集每行的已匹配标签列
+    row_labels = {}  # row -> sorted list of (col, input_label_pos)
+    for (tr, tc), in_pos in label_map.items():
+        row_labels.setdefault(tr, []).append((tc, in_pos))
+    for tr in row_labels:
+        row_labels[tr].sort()
+
+    # 按标签领地填充（同行向左找标签）
+    for tr, labels in row_labels.items():
+        for idx, (tc, in_pos) in enumerate(labels):
+            tmpl_text = tmpl_cell_map.get((tr, tc), "")
+            if _has_skip_keyword(tmpl_text):
+                continue
+
+            if idx + 1 < len(labels):
+                territory_end = labels[idx + 1][0]
+            else:
+                territory_end = max(c for (r, c) in tmpl_cell_map if r == tr) + 1
+
+            in_val_key = (in_pos[0], in_pos[1] + 1)
+            if in_val_key not in in_cell_map:
+                continue
+            in_val = in_cell_map[in_val_key].strip()
+            if not in_val or in_val_key in label_map.values():
+                for fallback_d in range(2, 5):
+                    fb_key = (in_pos[0], in_pos[1] + fallback_d)
+                    if fb_key in in_cell_map and fb_key not in label_map.values():
+                        in_val = in_cell_map[fb_key].strip()
+                        if in_val:
+                            break
+            if not in_val:
+                continue
+
+            for fill_c in range(tc + 1, territory_end):
+                _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, fill_c, in_val, tc)
+
+    # 补充：同行没有标签的空单元格，向上查找表头
+    _fill_by_column_header(table, tmpl_cell_map, tmpl_pos_to_id, label_map, in_cell_map)
+
+
+def _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, tc, in_val, label_col=None):
+    """填入单个单元格的值，可选从标签列复制格式。"""
+    fill_key = (tr, tc)
+    if fill_key not in tmpl_cell_map:
+        return
+    if tmpl_cell_map[fill_key].strip():
+        return
+    if _has_skip_keyword(tmpl_cell_map.get((tr, tc), "")):
+        return
+    cell_id = tmpl_pos_to_id.get(fill_key)
+    if cell_id is None:
+        return
+    out_id = 0
+    for row in table.rows:
+        for cell in row.cells:
+            if out_id == cell_id:
+                _set_cell_text(cell, in_val)
+                if label_col is not None:
+                    _copy_label_format(row, label_col, tc)
+            out_id += 1
+
+
+def _fill_by_column_header(table, tmpl_cell_map, tmpl_pos_to_id, label_map, in_cell_map):
+    """向上查找表头标签，按列偏移填入空单元格。
+
+    用于处理数据行（如时间槽行、V3数据行），这些行的单元格全空，
+    需要向上找到表头行已匹配的标签来确定列对应关系。
+    """
+    max_row = max(r for (r, c) in tmpl_cell_map) if tmpl_cell_map else 0
+
+    # 建立列映射：模板列 → 输入列（通过已匹配标签推导）
+    col_map = {}  # template_col → input_col
+    for (tr, tc), (ir, ic) in label_map.items():
+        if tr < max_row:  # 非最后一行（表头或标签行）
+            col_map[tc] = ic
+
+    if not col_map:
+        return
+
+    # 扫描没有同行标签的空单元格
     for (tr, tc), tm_text in tmpl_cell_map.items():
         if tm_text.strip():
             continue
+        if _has_skip_keyword(tmpl_cell_map.get((tr - 1, tc), "")) if tr > 0 else False:
+            continue
 
-        # 找最近的已匹配标签：先向左，再向上
-        label_key = None
-        for scan_c in range(tc - 1, -1, -1):
-            if (tr, scan_c) in label_map:
-                label_key = (tr, scan_c)
+        # 向上查找同列的已匹配标签
+        label_found = False
+        for scan_r in range(tr - 1, -1, -1):
+            if (scan_r, tc) in label_map:
+                in_pos = label_map[(scan_r, tc)]
+                d_row = tr - scan_r
+                in_val_key = (in_pos[0] + d_row, in_pos[1])
+                if in_val_key in in_cell_map:
+                    in_val = in_cell_map[in_val_key].strip()
+                    if in_val and in_val_key not in label_map.values():
+                        _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, tc, in_val, tc)
+                        label_found = True
                 break
-        if label_key is None:
-            for scan_r in range(tr - 1, -1, -1):
-                if (scan_r, tc) in label_map:
-                    label_key = (scan_r, tc)
-                    break
-        if label_key is None:
+        if label_found:
             continue
 
-        # 计算偏移
-        d_row = tr - label_key[0]
-        d_col = tc - label_key[1]
+        # 如果同列没有标签，尝试用列映射
+        if tc in col_map:
+            in_col = col_map[tc]
+            in_val_key = (tr, in_col)
+            if in_val_key in in_cell_map:
+                in_val = in_cell_map[in_val_key].strip()
+                if in_val and in_val_key not in label_map.values():
+                    _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, tc, in_val)
 
-        # 输入侧取对应值
-        in_label = label_map[label_key]
-        in_val_key = (in_label[0] + d_row, in_label[1] + d_col)
-        if in_val_key not in in_cell_map:
-            continue
-        in_val = in_cell_map[in_val_key].strip()
-        if not in_val:
-            continue
-        # 防止把输入侧的标签当值填入
-        if in_val_key in label_map.values():
-            continue
 
-        # 在输出文档中找到对应单元格并填入
-        cell_id = tmpl_pos_to_id.get((tr, tc))
-        if cell_id is None:
-            continue
-        out_id = 0
-        for row in table.rows:
-            for cell in row.cells:
-                if out_id == cell_id:
-                    _set_cell_text(cell, in_val)
-                out_id += 1
+def _copy_label_format(row, label_col, target_col):
+    """将同行标签单元格的字体格式复制到目标单元格。"""
+    try:
+        label_cell = row.cells[label_col] if label_col < len(row.cells) else None
+        target_cell = row.cells[target_col] if target_col < len(row.cells) else None
+        if not label_cell or not target_cell:
+            return
+        if not label_cell.paragraphs or not target_cell.paragraphs:
+            return
+        src_run = None
+        for r in label_cell.paragraphs[0].runs:
+            if r.text and r.text.strip():
+                src_run = r
+                break
+        if not src_run and label_cell.paragraphs[0].runs:
+            src_run = label_cell.paragraphs[0].runs[0]
+        if not src_run:
+            return
+        dst_run = None
+        for r in target_cell.paragraphs[0].runs:
+            if r.text and r.text.strip():
+                dst_run = r
+                break
+        if not dst_run and target_cell.paragraphs[0].runs:
+            dst_run = target_cell.paragraphs[0].runs[0]
+        if not dst_run:
+            dst_run = target_cell.paragraphs[0].add_run("")
+        # 复制格式
+        if src_run.font.name:
+            dst_run.font.name = src_run.font.name
+        if src_run.font.size:
+            dst_run.font.size = src_run.font.size
+        if src_run.font.bold is not None:
+            dst_run.font.bold = src_run.font.bold
+        # 段落对齐
+        src_align = label_cell.paragraphs[0].paragraph_format.alignment
+        if src_align is not None:
+            target_cell.paragraphs[0].paragraph_format.alignment = src_align
+    except Exception:
+        pass  # 格式复制失败不阻塞主流程
 
 
 def _strip_label_if_template_has_none(input_text, template_text):
