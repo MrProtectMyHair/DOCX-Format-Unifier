@@ -5,17 +5,16 @@ from difflib import SequenceMatcher
 
 # 常见标题字段 — 这些文本在模板和输入中都是字段名，应保留模板原文
 FIELD_LABELS = {
-    "序号", "姓名", "性 名", "性别", "学历", "职称", "职务",
+    "序号", "姓名", "性别", "学历", "职称", "职务",
     "身份证号", "身份证号码", "银行卡号", "银行账号", "开户行",
     "开户行支行", "联系方式", "联系电话", "手机号",
     "事由", "授课名称", "讲座名称", "课时数", "总金额",
     "申报类别", "培训类型", "培训内容", "培训需求学院",
     "专家类型", "专家信息", "专家职称", "专家简介",
     "时段", "时间", "内容", "实施方式", "培训目标",
-    "专家课酬", "食宿安排", "辅导对象", "项目名称", "填表日期",
-    "申报项目", "课程名称", "申报日期", "负责人", "经办人",
-    "分管负责人", "审核人", "审批人",
-    "辅导对象", "及人数",
+    "专家课酬", "食宿安排", "辅导对象", "及人数",
+    "项目名称", "填表日期", "申报项目", "课程名称", "申报日期",
+    "负责人", "经办人", "分管负责人", "审核人", "审批人",
 }
 
 
@@ -228,14 +227,16 @@ def _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches):
             col_map[ic] = best_tc
             used_tmpl.add(best_tc)
 
-            # 也匹配表头行本身
-            if (0, ic) not in matched_in and (0, best_tc) not in matched_tmpl:
-                matches.append({
-                    "input_row": 0, "input_col": ic,
-                    "tmpl_row": 0, "tmpl_col": best_tc,
-                })
-                matched_in.add((0, ic))
-                matched_tmpl.add((0, best_tc))
+            # 也匹配表头行本身（跳过字段标签）
+            tmpl_hdr_text = tmpl_cells.get((0, best_tc), "")
+            if not _is_field_label(tmpl_hdr_text, 0):
+                if (0, ic) not in matched_in and (0, best_tc) not in matched_tmpl:
+                    matches.append({
+                        "input_row": 0, "input_col": ic,
+                        "tmpl_row": 0, "tmpl_col": best_tc,
+                    })
+                    matched_in.add((0, ic))
+                    matched_tmpl.add((0, best_tc))
 
     # 质量检查：表头标签必须全部唯一（数据表特征），至少 3 列且 >= 33% 覆盖率
     in_labels_list = [lbl for _, (lbl, _) in in_headers.items()]
@@ -416,9 +417,7 @@ def _normalize_text(text):
         code = ord(ch)
         if code == 0x3000:  # 全角空格 → 半角空格
             result.append(' ')
-        elif 0xFF01 <= code <= 0xFF5E:  # 全角标点/字母/数字
-            result.append(chr(code - 0xFEE0))
-        elif 0xFF10 <= code <= 0xFF19:  # 全角数字 0-9
+        elif 0xFF01 <= code <= 0xFF5E:  # 全角标点/字母/数字（含全角数字 0xFF10-0xFF19）
             result.append(chr(code - 0xFEE0))
         else:
             result.append(ch)
@@ -433,8 +432,8 @@ def _extract_label(text):
     # 先按冒号分隔（标签：值格式）
     match = re.split(r"[:：]", first_line, maxsplit=1)
     candidate = match[0].strip()
-    # 如果候选标签包含括号内容，去掉括号部分
-    candidate = re.sub(r"[（(][^)）]*[)）]", "", candidate).strip()
+    # 去掉括号及其内容（左右括号配对或仅有左括号时均处理）
+    candidate = re.sub(r"[（(][^)）]*(?:[)）])?", "", candidate).strip()
     candidate = candidate.strip("[]()（）")
     # 去掉标签内的空白（如"姓 名" → "姓名"）
     candidate = re.sub(r"\s+", "", candidate)

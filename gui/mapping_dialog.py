@@ -7,13 +7,20 @@ from tkinter import StringVar
 BTN_BLUE = "#1E90FF"
 
 
+def _safe_font(family="SimHei", size=13, **kwargs):
+    try:
+        return ctk.CTkFont(family=family, size=size, **kwargs)
+    except Exception:
+        return ctk.CTkFont(size=size, **kwargs)
+
+
 class MappingDialog(ctk.CTkToplevel):
     def __init__(self, parent, input_data, template_data, auto_matches):
         super().__init__(parent)
         self.title("字段映射配置")
-        self.font = ctk.CTkFont(family="SimHei", size=13)
-        self.font_bold = ctk.CTkFont(family="SimHei", size=13, weight="bold")
-        self.font_small = ctk.CTkFont(family="SimHei", size=12)
+        self.font = _safe_font("SimHei", 13)
+        self.font_bold = _safe_font("SimHei", 13, weight="bold")
+        self.font_small = _safe_font("SimHei", 12)
         self.geometry("750x580")
         self.minsize(600, 400)
         self.transient(parent)
@@ -253,7 +260,7 @@ class MappingDialog(ctk.CTkToplevel):
             if show_only and not has_mapped:
                 outer.pack_forget()
             else:
-                outer.pack(fill="x", pady=2, before=self._scroll._parent)
+                outer.pack(fill="x", pady=2)
 
     def _reset_auto(self):
         self._current_map = dict(self._auto_map)

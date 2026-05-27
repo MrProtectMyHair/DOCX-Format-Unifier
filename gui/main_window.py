@@ -15,16 +15,23 @@ from gui.mapping_dialog import MappingDialog
 BTN_BLUE = "#1E90FF"
 
 
+def _safe_font(family="SimHei", size=13, **kwargs):
+    try:
+        return ctk.CTkFont(family=family, size=size, **kwargs)
+    except Exception:
+        return ctk.CTkFont(size=size, **kwargs)
+
+
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("DOCX 格式统一工具")
         self.geometry("750x560")
         self.minsize(650, 440)
-        self._f_title = ctk.CTkFont(family="SimHei", size=20, weight="bold")
-        self._f_label = ctk.CTkFont(family="SimHei", size=13)
-        self._f_log = ctk.CTkFont(family="SimHei", size=12)
-        self._f_status = ctk.CTkFont(family="SimHei", size=11)
+        self._f_title = _safe_font("SimHei", 20, weight="bold")
+        self._f_label = _safe_font("SimHei", 13)
+        self._f_log = _safe_font("SimHei", 12)
+        self._f_status = _safe_font("SimHei", 11)
 
         self.input_path = ctk.StringVar()
         self.template_path = ctk.StringVar()
@@ -159,6 +166,12 @@ class MainWindow(ctk.CTk):
             return
         if not output_path:
             messagebox.showerror("错误", "请指定输出位置")
+            return
+        if not input_path.lower().endswith('.docx'):
+            messagebox.showerror("错误", "输入文件不是 .docx 格式")
+            return
+        if not tmpl_path.lower().endswith('.docx'):
+            messagebox.showerror("错误", "模板文件不是 .docx 格式")
             return
 
         self.convert_btn.configure(state="disabled", text="处理中...")

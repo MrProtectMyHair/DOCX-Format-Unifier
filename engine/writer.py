@@ -10,7 +10,10 @@ def generate_output(template_path, input_data, template_data, para_matches, cell
     策略：复制模板文件，将输入文件的文字内容填入模板对应位置。
     """
     # 1. 复制模板文件
-    shutil.copy2(template_path, output_path)
+    try:
+        shutil.copy2(template_path, output_path)
+    except (IOError, PermissionError) as e:
+        raise IOError("无法写入输出文件，请检查文件是否被其他程序占用或路径是否有写入权限") from e
 
     # 2. 打开副本进行修改
     doc = Document(output_path)
@@ -22,7 +25,10 @@ def generate_output(template_path, input_data, template_data, para_matches, cell
     _replace_table_cells(doc, input_data, template_data, cell_matches)
 
     # 5. 保存
-    doc.save(output_path)
+    try:
+        doc.save(output_path)
+    except (IOError, PermissionError) as e:
+        raise IOError("无法保存输出文件，请关闭已打开的输出文件后重试") from e
 
 
 def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras):
