@@ -183,9 +183,10 @@ def main():
 
     # V1 + V2 (share template)
     for input_name in ["Reference Input.docx", "Reference Input V2.docx"]:
-        data, error = run_pipeline(input_name)
+        data, error = run_pipeline(input_name, "Reference_Template_Empty.docx")
         if error:
-            print(f"\n  [SKIP] {input_name}: {error}")
+            m = f"\n  [SKIP] {input_name}: {error}"
+            print(m)
             continue
         print(f"\n--- {data['name']} ---")
         for check_name, fn in CHECKS:
@@ -193,8 +194,8 @@ def main():
             if not ok: all_ok = False
             print(f"  [{'PASS' if ok else 'FAIL'}] {check_name}: {msg}")
 
-    # V3 (different template)
-    data3, err3 = run_pipeline("Reference_Input_V3.docx", "Reference_Template_V3.docx")
+    # V3
+    data3, err3 = run_pipeline("Reference_Input_V3.docx", "Reference_Template_V3_Empty.docx")
     if err3:
         print(f"\n  [SKIP] V3: {err3}")
     else:

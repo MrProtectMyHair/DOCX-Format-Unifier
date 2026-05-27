@@ -174,6 +174,15 @@ class MainWindow(ctk.CTk):
             messagebox.showerror("错误", "模板文件不是 .docx 格式")
             return
 
+        # 如果输出文件已存在，先尝试删除（防止被 Word 等程序占用导致保存失败）
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except PermissionError:
+                messagebox.showerror("错误",
+                    "输出文件被占用，请关闭已打开的输出文件后重试:\n" + output_path)
+                return
+
         self.convert_btn.configure(state="disabled", text="处理中...")
         self._log("=" * 40)
 
@@ -226,9 +235,10 @@ class MainWindow(ctk.CTk):
             self.after(0, lambda: self._on_conversion_done(output_path))
 
         except Exception as e:
-            self._log("错误: " + str(e))
+            err_msg = str(e)
+            self._log("错误: " + err_msg)
             self._update_status("转换失败")
-            self.after(0, lambda: self._on_conversion_error(str(e)))
+            self.after(0, lambda msg=err_msg: self._on_conversion_error(msg))
 
     def _on_conversion_done(self, output_path):
         self.convert_btn.configure(state="normal", text="开始转换")
