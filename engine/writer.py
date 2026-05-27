@@ -304,53 +304,76 @@ def _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, tc, in_val, label_c
 
 
 def _fill_by_column_header(table, tmpl_cell_map, tmpl_pos_to_id, label_map, in_cell_map):
-    """向上查找表头标签，按列偏移填入空单元格。
+    """列头引导填充：仅处理「全空数据行」，不干扰领地填充。
 
-    用于处理数据行（如时间槽行、V3数据行），这些行的单元格全空，
-    需要向上找到表头行已匹配的标签来确定列对应关系。
+    先找到上方最近的「表头行」（该行有>=2个已匹配标签），
+    然后按顺序偏移从输入查找对应数据行，按列映射填入。
     """
-    max_row = max(r for (r, c) in tmpl_cell_map) if tmpl_cell_map else 0
-
-    # 建立列映射：模板列 → 输入列（通过已匹配标签推导）
-    col_map = {}  # template_col → input_col
-    for (tr, tc), (ir, ic) in label_map.items():
-        if tr < max_row:  # 非最后一行（表头或标签行）
-            col_map[tc] = ic
-
-    if not col_map:
+    if not label_map:
         return
 
-    # 扫描没有同行标签的空单元格
-    for (tr, tc), tm_text in tmpl_cell_map.items():
-        if tm_text.strip():
+    max_row = max(r for (r, c) in tmpl_cell_map) if tmpl_cell_map else 0
+
+    # 找到所有有标签的行
+    rows_with_labels = set(tr for (tr, tc) in label_map)
+    # 找每列的标签映射: template_col → input_col（从最近的表头行推导）
+    col_map = {}
+    for (tr, tc), (ir, ic) in label_map.items():
+        if tc not in col_map:
+            col_map[tc] = ic
+
+    # 收集需要保护的模板行（含签字等关键词）
+    skip_rows = set()
+    for (tr, tc), text in tmpl_cell_map.items():
+        if _has_skip_keyword(text):
+            skip_rows.add(tr)
+
+    # 处理全空数据行（该行没有已匹配标签）
+    for tr in range(max_row + 1):
+        if tr in rows_with_labels:  # 该行有标签 → 领地填充已处理，跳过
             continue
-        if _has_skip_keyword(tmpl_cell_map.get((tr - 1, tc), "")) if tr > 0 else False:
+        if tr in skip_rows:  # 签字行，跳过
             continue
 
-        # 向上查找同列的已匹配标签
-        label_found = False
+        # 找到该空行上方最近的「表头行」（至少有2个标签的行）
+        header_row = None
         for scan_r in range(tr - 1, -1, -1):
-            if (scan_r, tc) in label_map:
-                in_pos = label_map[(scan_r, tc)]
-                d_row = tr - scan_r
-                in_val_key = (in_pos[0] + d_row, in_pos[1])
-                if in_val_key in in_cell_map:
-                    in_val = in_cell_map[in_val_key].strip()
-                    if in_val and in_val_key not in label_map.values():
-                        _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, tc, in_val, tc)
-                        label_found = True
+            n = sum(1 for (sr, sc) in label_map if sr == scan_r)
+            if n >= 2:
+                header_row = scan_r
                 break
-        if label_found:
+        if header_row is None:
             continue
 
-        # 如果同列没有标签，尝试用列映射
-        if tc in col_map:
+        # 输入侧对应的表头行
+        in_header_row = None
+        for (sr, sc), (ir, ic) in label_map.items():
+            if sr == header_row:
+                in_header_row = ir
+                break
+        if in_header_row is None:
+            continue
+
+        # 按顺序偏移找输入数据行
+        offset = tr - header_row
+        in_data_row = in_header_row + offset
+
+        for tc in col_map:
+            fill_key = (tr, tc)
+            if fill_key not in tmpl_cell_map:
+                continue
+            if tmpl_cell_map[fill_key].strip():
+                continue
+
             in_col = col_map[tc]
-            in_val_key = (tr, in_col)
-            if in_val_key in in_cell_map:
-                in_val = in_cell_map[in_val_key].strip()
-                if in_val and in_val_key not in label_map.values():
-                    _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, tc, in_val)
+            in_val_key = (in_data_row, in_col)
+            if in_val_key not in in_cell_map:
+                continue
+            in_val = in_cell_map[in_val_key].strip()
+            if not in_val or in_val_key in label_map.values():
+                continue
+
+            _fill_one_cell(table, tmpl_cell_map, tmpl_pos_to_id, tr, tc, in_val, tc)
 
 
 def _copy_label_format(row, label_col, target_col):
