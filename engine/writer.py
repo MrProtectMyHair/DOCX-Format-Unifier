@@ -316,11 +316,6 @@ def _fill_by_column_header(table, tmpl_cell_map, tmpl_pos_to_id, label_map, in_c
 
     # 找到所有有标签的行
     rows_with_labels = set(tr for (tr, tc) in label_map)
-    # 找每列的标签映射: template_col → input_col（从最近的表头行推导）
-    col_map = {}
-    for (tr, tc), (ir, ic) in label_map.items():
-        if tc not in col_map:
-            col_map[tc] = ic
 
     # 收集需要保护的模板行（含签字等关键词）
     skip_rows = set()
@@ -330,9 +325,9 @@ def _fill_by_column_header(table, tmpl_cell_map, tmpl_pos_to_id, label_map, in_c
 
     # 处理全空数据行（该行没有已匹配标签）
     for tr in range(max_row + 1):
-        if tr in rows_with_labels:  # 该行有标签 → 领地填充已处理，跳过
+        if tr in rows_with_labels:
             continue
-        if tr in skip_rows:  # 签字行，跳过
+        if tr in skip_rows:
             continue
 
         # 找到该空行上方最近的「表头行」（至少有2个标签的行）
@@ -345,13 +340,44 @@ def _fill_by_column_header(table, tmpl_cell_map, tmpl_pos_to_id, label_map, in_c
         if header_row is None:
             continue
 
-        # 输入侧对应的表头行
+        # 从该表头行构建列映射
+        col_map = {}
         in_header_row = None
         for (sr, sc), (ir, ic) in label_map.items():
             if sr == header_row:
-                in_header_row = ir
-                break
+                if in_header_row is None:
+                    in_header_row = ir
+                if sc not in col_map:
+                    col_map[sc] = ic
         if in_header_row is None:
+            continue
+
+        # 回退：未匹配的表头列，用低阈值尝试匹配输入列
+        if col_map:
+            from engine.matcher import _extract_label, _label_similarity
+            all_tmpl_cols = set(tc for (r, tc) in tmpl_cell_map if r == header_row)
+            all_in_cols = set(c for (r, c) in in_cell_map if r == in_header_row)
+            for tc in all_tmpl_cols:
+                if tc in col_map:
+                    continue
+                tmpl_text = tmpl_cell_map.get((header_row, tc), "")
+                if not tmpl_text.strip():
+                    continue
+                tmpl_lbl = _extract_label(tmpl_text)
+                best_ic = None
+                best_score = 0.0
+                for ic in all_in_cols:
+                    in_text = in_cell_map.get((in_header_row, ic), "")
+                    in_lbl = _extract_label(in_text)
+                    score = _label_similarity(tmpl_lbl, in_lbl)
+                    if score > best_score and score >= 0.5:
+                        best_score = score
+                        best_ic = ic
+                if best_ic is not None:
+                    col_map[tc] = best_ic
+                    all_in_cols.discard(best_ic)
+
+        if not col_map:
             continue
 
         # 按顺序偏移找输入数据行
