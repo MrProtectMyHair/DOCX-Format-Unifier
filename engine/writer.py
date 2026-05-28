@@ -1,22 +1,26 @@
 """DOCX 生成模块 — 以模板为骨架，替换文字内容"""
 
+import os
 import shutil
+import tempfile
 from docx import Document
 
 
 def generate_output(template_path, input_data, template_data, para_matches, cell_matches, unmatched_paras, output_path):
     """生成输出文件。
 
-    策略：复制模板文件，将输入文件的文字内容填入模板对应位置。
+    策略：复制模板到临时文件（避免 Windows Explorer 锁），修改后移到目标路径。
     """
-    # 1. 复制模板文件
+    # 1. 复制模板到临时文件
+    fd, tmp_path = tempfile.mkstemp(suffix='.docx')
+    os.close(fd)
     try:
-        shutil.copy2(template_path, output_path)
+        shutil.copy2(template_path, tmp_path)
     except (IOError, PermissionError) as e:
         raise IOError("无法写入输出文件，请检查文件是否被其他程序占用或路径是否有写入权限") from e
 
     # 2. 打开副本进行修改
-    doc = Document(output_path)
+    doc = Document(tmp_path)
 
     # 3. 替换段落文本
     _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras)
@@ -27,11 +31,19 @@ def generate_output(template_path, input_data, template_data, para_matches, cell
     # 4.5. 空值填充：模板空单元格 ← 邻近标签对应的输入值
     _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches)
 
-    # 5. 保存
+    # 5. 保存到临时文件
     try:
-        doc.save(output_path)
+        doc.save(tmp_path)
     except (IOError, PermissionError) as e:
+        os.unlink(tmp_path)
         raise IOError("无法保存输出文件，请关闭已打开的输出文件后重试") from e
+
+    # 6. 移动到目标路径
+    try:
+        shutil.move(tmp_path, output_path)
+    except (IOError, PermissionError) as e:
+        os.unlink(tmp_path)
+        raise IOError("无法写入输出文件，请检查文件是否被其他程序占用或路径是否有写入权限") from e
 
 
 def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras):
