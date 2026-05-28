@@ -14,6 +14,7 @@ def generate_output(template_path, input_data, template_data, para_matches, tabl
     # 1. 复制模板到临时文件
     fd, tmp_path = tempfile.mkstemp(suffix='.docx')
     os.close(fd)
+    os.unlink(tmp_path)  # 删除 mkstemp 创建的占位空文件，避免 Windows 句柄冲突
     try:
         shutil.copy2(template_path, tmp_path)
     except (IOError, PermissionError) as e:
