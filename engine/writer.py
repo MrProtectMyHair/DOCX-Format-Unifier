@@ -2,7 +2,6 @@
 
 import os
 import shutil
-import tempfile
 import uuid
 from docx import Document
 
@@ -12,44 +11,45 @@ def generate_output(template_path, input_data, template_data, para_matches, tabl
 
     策略：复制模板到临时文件（避免 Windows Explorer 锁），修改后移到目标路径。
     """
-    # 1. 复制模板到临时文件（用 uuid 生成路径，不预先创建文件，避免杀软锁占位文件）
-    tmp_path = os.path.join(tempfile.gettempdir(), f'tfu_{uuid.uuid4().hex}.docx')
+    # 1. 复制模板到临时文件（放在输出目录而非系统 Temp，避免杀软重点扫描）
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    tmp_path = os.path.join(output_dir, f'~tfu_{uuid.uuid4().hex}.docx')
     try:
         shutil.copy2(template_path, tmp_path)
     except (IOError, PermissionError) as e:
         raise IOError("无法写入输出文件，请检查文件是否被其他程序占用或路径是否有写入权限") from e
 
-    # 2. 打开副本进行修改
-    doc = Document(tmp_path)
-
-    # 3. 替换段落文本
-    _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras)
-
-    # 4. 替换表格单元格文本（遍历所有表格）
-    for ti, tm in enumerate(table_matches):
-        if ti < len(doc.tables) and ti < len(input_data["tables"]) and ti < len(template_data["tables"]):
-            _replace_table_cells(doc.tables[ti], input_data["tables"][ti],
-                                template_data["tables"][ti], tm["cell_matches"])
-
-    # 4.5. 空值填充（遍历所有表格）
-    for ti, tm in enumerate(table_matches):
-        if ti < len(doc.tables) and ti < len(input_data["tables"]) and ti < len(template_data["tables"]):
-            _fill_empty_cells_by_label(doc.tables[ti], input_data["tables"][ti],
-                                       template_data["tables"][ti], tm["cell_matches"])
-
-    # 5. 保存到临时文件
     try:
+        # 2. 打开副本进行修改
+        doc = Document(tmp_path)
+
+        # 3. 替换段落文本
+        _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras)
+
+        # 4. 替换表格单元格文本（遍历所有表格）
+        for ti, tm in enumerate(table_matches):
+            if ti < len(doc.tables) and ti < len(input_data["tables"]) and ti < len(template_data["tables"]):
+                _replace_table_cells(doc.tables[ti], input_data["tables"][ti],
+                                    template_data["tables"][ti], tm["cell_matches"])
+
+        # 4.5. 空值填充（遍历所有表格）
+        for ti, tm in enumerate(table_matches):
+            if ti < len(doc.tables) and ti < len(input_data["tables"]) and ti < len(template_data["tables"]):
+                _fill_empty_cells_by_label(doc.tables[ti], input_data["tables"][ti],
+                                           template_data["tables"][ti], tm["cell_matches"])
+
+        # 5. 保存到临时文件
         doc.save(tmp_path)
-    except (IOError, PermissionError) as e:
-        os.unlink(tmp_path)
-        raise IOError("无法保存输出文件，请关闭已打开的输出文件后重试") from e
 
-    # 6. 移动到目标路径
-    try:
+        # 6. 移动到目标路径
         shutil.move(tmp_path, output_path)
     except (IOError, PermissionError) as e:
-        os.unlink(tmp_path)
-        raise IOError("无法写入输出文件，请检查文件是否被其他程序占用或路径是否有写入权限") from e
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise IOError("无法保存输出文件，请关闭已打开的输出文件后重试") from e
 
 
 def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras):
