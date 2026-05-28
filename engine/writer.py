@@ -16,6 +16,8 @@ def generate_output(template_path, input_data, template_data, para_matches, tabl
     tmp_path = os.path.join(output_dir, f'~tfu_{uuid.uuid4().hex}.docx')
     try:
         shutil.copy2(template_path, tmp_path)
+        # copy2 会复制源文件的只读属性，强制去掉确保后续 doc.save 可写
+        os.chmod(tmp_path, 0o666)
     except (IOError, PermissionError) as e:
         raise IOError("无法写入输出文件，请检查文件是否被其他程序占用或路径是否有写入权限") from e
 
