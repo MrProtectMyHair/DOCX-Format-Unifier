@@ -204,6 +204,11 @@ def _fill_form_paragraph(para, input_text):
     has_slot = any(s['type'] == 'slot' for s in skeleton)
     has_fixed = any(s['type'] == 'fixed' and s['text'].strip() for s in skeleton)
     if not has_slot or not has_fixed:
+        # 无空白 run：比较去空格文本，一致则保留模板 run 结构
+        import re
+        tmpl_text = ''.join(r.text for r in runs)
+        if re.sub(r'\s+', '', tmpl_text) == re.sub(r'\s+', '', input_text):
+            return
         _set_paragraph_text(para, input_text)
         return
 
@@ -212,11 +217,22 @@ def _fill_form_paragraph(para, input_text):
                      if s['type'] == 'fixed' and s['text'].strip()]
     anchors = []
     scan_pos = 0
+    import re
     for run_idx, ft in fixed_entries:
         pos = input_text.find(ft, scan_pos)
+        match_end = pos + len(ft) if pos >= 0 else None
+        if pos < 0 and len(re.sub(r'\s+', '', ft)) >= 2:
+            # 空格不一致回退：用无空格版做模糊匹配
+            ft_ns = re.sub(r'\s+', '', ft)
+            pattern = re.escape(ft_ns[0]) + ''.join(
+                r'\s*' + re.escape(c) for c in ft_ns[1:])
+            m = re.search(pattern, input_text[scan_pos:])
+            if m:
+                pos = scan_pos + m.start()
+                match_end = scan_pos + m.end()
         if pos >= 0:
-            anchors.append((run_idx, pos, pos + len(ft)))
-            scan_pos = pos + len(ft)
+            anchors.append((run_idx, pos, match_end))
+            scan_pos = match_end
 
     # 3. 计算每个槽的填充值
     slot_entries = [(s['runs'], s) for s in skeleton if s['type'] == 'slot']
@@ -558,8 +574,10 @@ def _strip_label_if_template_has_none(input_text, template_text):
     if not in_label or len(in_label) < 2:
         return input_text
     # 检查模板是否包含输入的标签（作为独立词出现）
-    if in_label not in template_text:
-        import re
+    # 同时检查去空格版本，因为 _extract_label 会去掉所有空格
+    import re
+    tmpl_no_space = re.sub(r'\s+', '', template_text)
+    if in_label not in template_text and in_label not in tmpl_no_space:
         m = re.search(r'[:：]\s*(.+)', input_text)
         if m:
             return m.group(1).strip()
