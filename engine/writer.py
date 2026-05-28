@@ -75,6 +75,9 @@ def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_
                 end = len(text)
             _split_map[(ii, ti2)] = text[start:end].strip()
 
+    # 未匹配段落的索引（后续会从中移除被合并的）
+    unmatched_indices = [i for i in unmatched_paras if input_paras[i]["text"].strip()]
+
     for ti, para in enumerate(doc.paragraphs):
         if ti in tmpl_to_input:
             ii = tmpl_to_input[ti]
@@ -82,13 +85,19 @@ def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_
                 new_text = _split_map[(ii, ti)]
             else:
                 new_text = input_paras[ii]["text"]
+            # 检查未匹配段落：若其 label 在模板中存在但不在当前 input 中，合并进来
+            for u_i in list(unmatched_indices):
+                u_label = _extract_label(input_paras[u_i]["text"])
+                if u_label and len(u_label) >= 2:
+                    if u_label in tmpl_paras[ti]["text"] and u_label not in new_text:
+                        new_text += input_paras[u_i]["text"]
+                        unmatched_indices.remove(u_i)
             # 如果输入段落含「标签：值」格式但模板段落只有值（无标签），剥离标签
             new_text = _strip_label_if_template_has_none(
                 new_text, tmpl_paras[ti]["text"])
             _fill_form_paragraph(para, new_text)
 
     # 追加未匹配的输入段落
-    unmatched_indices = [i for i in unmatched_paras if input_paras[i]["text"].strip()]
     for ii in unmatched_indices:
         new_text = input_paras[ii]["text"]
         last_para = doc.paragraphs[-1] if doc.paragraphs else None
@@ -261,6 +270,7 @@ def _fill_form_paragraph(para, input_text):
             for s in skeleton:
                 if s['type'] == 'fixed' and s['run'] > first_run:
                     trailing += s['text']
+            trailing = trailing.lstrip()
             if trailing:
                 for pl in range(1, len(trailing) + 1):
                     p = value.find(trailing[:pl])
