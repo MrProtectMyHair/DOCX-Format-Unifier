@@ -85,7 +85,7 @@ def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_
             # 如果输入段落含「标签：值」格式但模板段落只有值（无标签），剥离标签
             new_text = _strip_label_if_template_has_none(
                 new_text, tmpl_paras[ti]["text"])
-            _set_paragraph_text(para, new_text)
+            _fill_form_paragraph(para, new_text)
 
     # 追加未匹配的输入段落
     unmatched_indices = [i for i in unmatched_paras if input_paras[i]["text"].strip()]
@@ -162,6 +162,108 @@ def _set_paragraph_text(para, text):
     else:
         # 没有 run 时添加一个
         run = para.add_run(text)
+
+
+def _is_blank_run(run):
+    """判断 run 是否为表单空白占位 — 纯下划线或带下划线格式的纯空白。"""
+    if not run.text:
+        return False
+    if all(c == '_' for c in run.text):
+        return True
+    if not run.text.strip() and run.font.underline:
+        return True
+    return False
+
+
+def _fill_form_paragraph(para, input_text):
+    """表单式段落填充：保留空白 run 的格式，从输入文本提取值填入。
+
+    对模板段落中的每个 blank run（下划线/空白标记），用固定文本作为锚点
+    从输入文本中定位并提取对应值，保留原 run 的字体和下划线格式。
+    """
+    runs = list(para.runs)
+    if not runs:
+        _set_paragraph_text(para, input_text)
+        return
+
+    # 1. 构建骨架 — 分类 run 并合并连续空白
+    skeleton = []  # {'type':'fixed'/'slot', 'runs':[idx,...] for slot, 'run':idx for fixed, 'text':str}
+    i = 0
+    while i < len(runs):
+        if _is_blank_run(runs[i]):
+            slot_runs = [i]
+            i += 1
+            while i < len(runs) and _is_blank_run(runs[i]):
+                slot_runs.append(i)
+                i += 1
+            skeleton.append({'type': 'slot', 'runs': slot_runs})
+        else:
+            skeleton.append({'type': 'fixed', 'run': i, 'text': runs[i].text})
+            i += 1
+
+    has_slot = any(s['type'] == 'slot' for s in skeleton)
+    has_fixed = any(s['type'] == 'fixed' and s['text'].strip() for s in skeleton)
+    if not has_slot or not has_fixed:
+        _set_paragraph_text(para, input_text)
+        return
+
+    # 2. 在输入文本中搜索每个固定文本 → 锚点位置 (run_idx, start, end)
+    fixed_entries = [(s['run'], s['text'].strip()) for s in skeleton
+                     if s['type'] == 'fixed' and s['text'].strip()]
+    anchors = []
+    scan_pos = 0
+    for run_idx, ft in fixed_entries:
+        pos = input_text.find(ft, scan_pos)
+        if pos >= 0:
+            anchors.append((run_idx, pos, pos + len(ft)))
+            scan_pos = pos + len(ft)
+
+    # 3. 计算每个槽的填充值
+    slot_entries = [(s['runs'], s) for s in skeleton if s['type'] == 'slot']
+    fill_values = {}  # first_run_idx → text
+
+    for slot_indices, _ in slot_entries:
+        first_run = slot_indices[0]
+
+        prev = None
+        for a in anchors:
+            if a[0] < first_run:
+                prev = a
+        nxt = None
+        for a in anchors:
+            if a[0] > first_run:
+                nxt = a
+                break
+
+        start = prev[2] if prev else 0
+        end = nxt[1] if nxt else len(input_text)
+        value = input_text[start:end]
+
+        # 最后一个槽：若后方还有固定文本未匹配到，用其首字符截断
+        if nxt is None and slot_indices == slot_entries[-1][0]:
+            trailing = ''
+            for s in skeleton:
+                if s['type'] == 'fixed' and s['run'] > first_run:
+                    trailing += s['text']
+            if trailing:
+                for pl in range(1, len(trailing) + 1):
+                    p = value.find(trailing[:pl])
+                    if p >= 0:
+                        value = value[:p]
+                        break
+
+        fill_values[first_run] = value
+
+    # 4. 应用：空白 run 用填充值替换，保留格式；多余空白 run 置空
+    for s in skeleton:
+        if s['type'] == 'fixed':
+            pass  # 保留模板固定 run
+        else:
+            slot_runs = s['runs']
+            value = fill_values.get(slot_runs[0], '')
+            runs[slot_runs[0]].text = value
+            for r in slot_runs[1:]:
+                runs[r].text = ''
 
 
 def _set_cell_text(cell, text):
