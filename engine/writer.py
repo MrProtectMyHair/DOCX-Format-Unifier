@@ -3,6 +3,7 @@
 import os
 import shutil
 import tempfile
+import uuid
 from docx import Document
 
 
@@ -11,10 +12,8 @@ def generate_output(template_path, input_data, template_data, para_matches, tabl
 
     策略：复制模板到临时文件（避免 Windows Explorer 锁），修改后移到目标路径。
     """
-    # 1. 复制模板到临时文件
-    fd, tmp_path = tempfile.mkstemp(suffix='.docx')
-    os.close(fd)
-    os.unlink(tmp_path)  # 删除 mkstemp 创建的占位空文件，避免 Windows 句柄冲突
+    # 1. 复制模板到临时文件（用 uuid 生成路径，不预先创建文件，避免杀软锁占位文件）
+    tmp_path = os.path.join(tempfile.gettempdir(), f'tfu_{uuid.uuid4().hex}.docx')
     try:
         shutil.copy2(template_path, tmp_path)
     except (IOError, PermissionError) as e:
