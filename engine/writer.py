@@ -6,7 +6,7 @@ import tempfile
 from docx import Document
 
 
-def generate_output(template_path, input_data, template_data, para_matches, cell_matches, unmatched_paras, output_path):
+def generate_output(template_path, input_data, template_data, para_matches, table_matches, unmatched_paras, output_path):
     """生成输出文件。
 
     策略：复制模板到临时文件（避免 Windows Explorer 锁），修改后移到目标路径。
@@ -25,11 +25,17 @@ def generate_output(template_path, input_data, template_data, para_matches, cell
     # 3. 替换段落文本
     _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_paras)
 
-    # 4. 替换表格单元格文本
-    _replace_table_cells(doc, input_data, template_data, cell_matches)
+    # 4. 替换表格单元格文本（遍历所有表格）
+    for ti, tm in enumerate(table_matches):
+        if ti < len(doc.tables) and ti < len(input_data["tables"]) and ti < len(template_data["tables"]):
+            _replace_table_cells(doc.tables[ti], input_data["tables"][ti],
+                                template_data["tables"][ti], tm["cell_matches"])
 
-    # 4.5. 空值填充：模板空单元格 ← 邻近标签对应的输入值
-    _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches)
+    # 4.5. 空值填充（遍历所有表格）
+    for ti, tm in enumerate(table_matches):
+        if ti < len(doc.tables) and ti < len(input_data["tables"]) and ti < len(template_data["tables"]):
+            _fill_empty_cells_by_label(doc.tables[ti], input_data["tables"][ti],
+                                       template_data["tables"][ti], tm["cell_matches"])
 
     # 5. 保存到临时文件
     try:
@@ -123,19 +129,10 @@ def _replace_paragraphs(doc, input_data, template_data, para_matches, unmatched_
                 run.font.size = in_para["font_size"]
 
 
-def _replace_table_cells(doc, input_data, template_data, cell_matches):
-    """替换模板表格单元格中的文本为输入文件的文本。
-
-    策略：为模板表格的每个单元格分配顺序 ID（与 reader 遍历顺序一致），
-    通过 ID 建立映射，在输出文档中以相同顺序遍历并替换。
-    此方法不依赖行列索引，天然处理合并单元格。
-    """
-    if not doc.tables or not cell_matches:
+def _replace_table_cells(table, in_tbl, tmpl_tbl, cell_matches):
+    """替换模板表格单元格中的文本为输入文件的文本。"""
+    if not cell_matches:
         return
-
-    table = doc.tables[0]
-    in_tbl = input_data["tables"][0]
-    tmpl_tbl = template_data["tables"][0]
 
     # 建立输入单元格的文本查找: (row, col) → text
     in_cell_map = {}
@@ -345,17 +342,22 @@ def _has_skip_keyword(text):
     return False
 
 
-def _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches):
+def _is_summary_label(text):
+    """判断文本是否包含汇总类关键词（合计/总计/小计）。"""
+    for kw in ("合计", "总计", "小计"):
+        if kw in text:
+            return True
+    return False
+
+
+def _fill_empty_cells_by_label(table, in_tbl, tmpl_tbl, cell_matches):
     """标签领地填充：每个匹配标签管辖其到下一个标签之间的空单元格。
 
     领地内所有空单元格填入该标签在输入侧的第一个值 (d_col=1)。
     遇到输入值越界或撞到其他标签时，回退到最近的有效值。
     """
-    if not doc.tables or not cell_matches:
+    if not cell_matches:
         return
-    table = doc.tables[0]
-    in_tbl = input_data["tables"][0]
-    tmpl_tbl = template_data["tables"][0]
 
     # 输入单元格查找
     in_cell_map = {}
@@ -399,6 +401,10 @@ def _fill_empty_cells_by_label(doc, input_data, template_data, cell_matches):
                 territory_end = labels[idx + 1][0]
             else:
                 territory_end = max(c for (r, c) in tmpl_cell_map if r == tr) + 1
+
+            # 汇总类标签（合计/总计/小计）仅填紧邻一格，不扩展领地
+            if _is_summary_label(tmpl_text):
+                territory_end = min(territory_end, tc + 2)
 
             in_val_key = (in_pos[0], in_pos[1] + 1)
             if in_val_key not in in_cell_map:
@@ -600,7 +606,17 @@ def _strip_label_if_template_has_none(input_text, template_text):
     import re
     tmpl_no_space = re.sub(r'\s+', '', template_text)
     if in_label not in template_text and in_label not in tmpl_no_space:
-        m = re.search(r'[:：]\s*(.+)', input_text)
-        if m:
-            return m.group(1).strip()
+        # 再检查模板 label 的核心部分（去下划线）是否出现在输入 label 中
+        # 例：模板"______专家级别：____" → core="专家级别" ∈ 输入"阮骏琳专家级别"
+        tmpl_label = _extract_label(template_text)
+        if tmpl_label:
+            tmpl_core = re.sub(r'[\s_]+', '', tmpl_label)
+            if len(tmpl_core) >= 2 and tmpl_core not in in_label:
+                m = re.search(r'[:：]\s*(.+)', input_text)
+                if m:
+                    return m.group(1).strip()
+        else:
+            m = re.search(r'[:：]\s*(.+)', input_text)
+            if m:
+                return m.group(1).strip()
     return input_text

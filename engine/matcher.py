@@ -117,51 +117,44 @@ def _split_compound_paragraphs(input_non_empty, tmpl_non_empty,
 
 def match_tables(input_data, template_data, cell_config=None):
     if not input_data["tables"] or not template_data["tables"]:
-        return {"cell_matches": [], "unmatched_input_cells": []}
+        return {"table_matches": []}
 
-    in_tbl = input_data["tables"][0]
-    tmpl_tbl = template_data["tables"][0]
+    table_matches = []
+    n_tables = min(len(input_data["tables"]), len(template_data["tables"]))
 
-    in_cells = {}
-    for cell in in_tbl["cells"]:
-        text = cell["text"].strip()
-        if text:
-            in_cells[(cell["row"], cell["col"])] = text
+    for t_idx in range(n_tables):
+        in_tbl = input_data["tables"][t_idx]
+        tmpl_tbl = template_data["tables"][t_idx]
 
-    tmpl_cells = {}
-    for cell in tmpl_tbl["cells"]:
-        text = cell["text"].strip()
-        if text:
-            tmpl_cells[(cell["row"], cell["col"])] = text
+        in_cells = {}
+        for cell in in_tbl["cells"]:
+            text = cell["text"].strip()
+            if text:
+                in_cells[(cell["row"], cell["col"])] = text
 
-    # 如果用户提供了手动映射配置，直接使用
-    if cell_config is not None:
-        return _match_by_cell_config(in_cells, tmpl_cells, cell_config)
+        tmpl_cells = {}
+        for cell in tmpl_tbl["cells"]:
+            text = cell["text"].strip()
+            if text:
+                tmpl_cells[(cell["row"], cell["col"])] = text
 
-    matched_in = set()
-    matched_tmpl = set()
-    matches = []
+        if cell_config is not None and t_idx == 0:
+            result = _match_by_cell_config(in_cells, tmpl_cells, cell_config)
+        else:
+            matched_in = set()
+            matched_tmpl = set()
+            matches = []
 
-    # Phase 0: column-header-guided matching for data rows
-    # Only activates when row 0 headers match well (>= 3 columns, >= 60% rate)
-    _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
+            _match_by_header(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
+            _match_unique_exact(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
+            _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
 
-    # Phase 1: global exact match for unique text in template
-    _match_unique_exact(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
+            unmatched = [{"row": r, "col": c} for (r, c) in in_cells if (r, c) not in matched_in]
+            result = {"cell_matches": matches, "unmatched_input_cells": unmatched}
 
-    # Phase 2: global label match with proximity preference
-    _match_label_global(in_cells, tmpl_cells, matched_in, matched_tmpl, matches)
+        table_matches.append(result)
 
-    # No global positional fallback — unmatched template cells keep original text
-
-    unmatched_input_cells = [
-        {"row": r, "col": c} for (r, c) in in_cells if (r, c) not in matched_in
-    ]
-
-    return {
-        "cell_matches": matches,
-        "unmatched_input_cells": unmatched_input_cells,
-    }
+    return {"table_matches": table_matches}
 
 
 def _match_by_cell_config(in_cells, tmpl_cells, cell_config):

@@ -143,13 +143,14 @@ class MainWindow(ctk.CTk):
             self._log("[2/3] 正在匹配文字和表格...")
             pr = match_paragraphs(id_, td_)
             cr = match_tables(id_, td_, cell_config=self._cell_config)
-            self._log("  段落匹配: %d 对  |  表格匹配: %d 对" % (len(pr["para_matches"]), len(cr["cell_matches"])))
+            total_cell = sum(len(tm["cell_matches"]) for tm in cr["table_matches"])
+            self._log("  段落匹配: %d 对  |  表格匹配: %d 对" % (len(pr["para_matches"]), total_cell))
             if pr["unmatched_input"]:
                 self._log("  未匹配: %d (保留原样)" % len(pr["unmatched_input"]))
             self._update_status("正在生成...")
             self._log("[3/3] 正在生成格式化文件...")
             generate_output(template_path=tp, input_data=id_, template_data=td_,
-                            para_matches=pr["para_matches"], cell_matches=cr["cell_matches"],
+                            para_matches=pr["para_matches"], table_matches=cr["table_matches"],
                             unmatched_paras=pr["unmatched_input"], output_path=op)
             self._log("完成 -> " + op)
             self._update_status("转换完成")
@@ -175,7 +176,8 @@ class MainWindow(ctk.CTk):
         if self._input_data is None: self._input_data = read_docx(ip)
         if self._tmpl_data is None:  self._tmpl_data  = read_docx(tp)
         cr = match_tables(self._input_data, self._tmpl_data)
-        dlg = MappingDialog(self, self._input_data, self._tmpl_data, cr["cell_matches"])
+        first_table_cells = cr["table_matches"][0]["cell_matches"] if cr["table_matches"] else []
+        dlg = MappingDialog(self, self._input_data, self._tmpl_data, first_table_cells)
         self.wait_window(dlg)
         if dlg.get_result() is not None:
             self._cell_config = dlg.get_result()
