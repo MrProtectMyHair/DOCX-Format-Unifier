@@ -38,6 +38,12 @@
    - 及时做 git commit，提交信息用英文简述"做了什么、为什么"，方便随时回滚
    - commit 粒度：一个逻辑单元一个 commit（如一个模块完成、一个 bug 修复），不攒大量改动一次性提交
    - **代码更改后必须重新打包 .exe**：对 `engine/`、`gui/` 或 `main.py` 的任何修改，必须在 commit 后重新运行 `pyinstaller DOCX_Format_Unifier.spec` 和 `pyinstaller DOCX_Format_Unifier_debug.spec`，更新 `dist/` 中的两个 .exe 文件，否则用户下载到本地的 exe 仍是旧版本
+8. **每次开发会话结束后**：
+   - 更新 `dev-logs/YYYY-MM-DD.md`，记录本次会话的完成事项、技术决策、遇到的问题
+   - 如果当天日志已存在，追加「补充」章节而非覆盖
+9. **清理临时文件**：
+   - 每次开发会话结束前，检查 `参考文件/` 目录，删除测试过程中产生的临时输出文件（命名含 `test`、`_t`、`_debug`、`_temp` 等前缀/后缀）
+   - 仅保留 `Reference*` 开头的正式参考文件
 
 ### 开发环境
 
