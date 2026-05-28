@@ -1,293 +1,193 @@
 # -*- coding: utf-8 -*-
-"""Main window — file selection, conversion, and log display"""
+# DOCX Format Unifier - Main Window
 
-import os
-import threading
+import os, threading
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-
 from engine.reader import read_docx
 from engine.matcher import match_paragraphs, match_tables
 from engine.writer import generate_output
 from gui.mapping_dialog import MappingDialog
 
+C_PRIMARY   = "#2563EB"
+C_PRIMARY_H = "#1D4ED8"
+C_BG_CARD   = ("#F8FAFC", "#1E293B")
+C_BORDER    = ("#E2E8F0", "#334155")
+C_TEXT_SUB  = ("#64748B", "#94A3B8")
 
-BTN_BLUE = "#1E90FF"
 
-
-def _safe_font(family="SimHei", size=13, **kwargs):
-    try:
-        return ctk.CTkFont(family=family, size=size, **kwargs)
-    except Exception:
-        return ctk.CTkFont(size=size, **kwargs)
+def _safe_font(family="Microsoft YaHei", size=13, **kwargs):
+    try: return ctk.CTkFont(family=family, size=size, **kwargs)
+    except Exception: return ctk.CTkFont(size=size, **kwargs)
 
 
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("DOCX 格式统一工具")
-        self.geometry("750x560")
-        self.minsize(650, 440)
-        self._f_title = _safe_font("SimHei", 20, weight="bold")
-        self._f_label = _safe_font("SimHei", 13)
-        self._f_log = _safe_font("SimHei", 12)
-        self._f_status = _safe_font("SimHei", 11)
-
-        self.input_path = ctk.StringVar()
+        self.title("DOCX Format Unifier")
+        self.geometry("760x580")
+        self.minsize(660, 460)
+        self.configure(fg_color=("gray95", "gray10"))
+        f_title  = _safe_font("Microsoft YaHei", 22, weight="bold")
+        self._f_label = _safe_font("Microsoft YaHei", 13)
+        f_log    = _safe_font("Microsoft YaHei", 12)
+        f_status = _safe_font("Microsoft YaHei", 10)
+        self.input_path    = ctk.StringVar()
         self.template_path = ctk.StringVar()
-        self.output_path = ctk.StringVar()
+        self.output_path   = ctk.StringVar()
+        self._input_data = self._tmpl_data = self._cell_config = None
+        self._build_ui(f_title, f_log, f_status)
 
-        self._input_data = None
-        self._tmpl_data = None
-        self._cell_config = None  # user manual mapping overrides
+    def _build_ui(self, f_title, f_log, f_status):
+        ctk.CTkLabel(self, text="DOCX  Format  Unifier",
+                     font=f_title, text_color=C_PRIMARY).pack(pady=(24, 4))
+        ctk.CTkLabel(self, text="Input  ·  Template  ·  Output",
+                     font=f_status, text_color=C_TEXT_SUB).pack(pady=(0, 16))
 
-        self._build_ui()
+        card = ctk.CTkFrame(self, fg_color=C_BG_CARD, corner_radius=10,
+                            border_width=1, border_color=C_BORDER)
+        card.pack(fill="x", padx=20, pady=(0, 12))
+        self._add_file_row(card, "Input File",    self.input_path,    0)
+        self._add_file_row(card, "Template File", self.template_path, 1)
+        self._add_file_row(card, "Output Path",   self.output_path,   2)
 
-    def _build_ui(self):
-        main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=20, pady=(20, 10))
+        log_card = ctk.CTkFrame(self, fg_color=C_BG_CARD, corner_radius=10,
+                                border_width=1, border_color=C_BORDER)
+        log_card.pack(fill="both", expand=True, padx=20, pady=(0, 12))
+        self.log_text = ctk.CTkTextbox(log_card, font=f_log, wrap="word",
+                                        fg_color="transparent", border_width=0)
+        self.log_text.pack(fill="both", expand=True, padx=8, pady=8)
 
-        title_label = ctk.CTkLabel(
-            main_frame, text="DOCX 格式统一工具",
-            font=self._f_title
-        )
-        title_label.pack(pady=(0, 20))
-
-        file_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        file_frame.pack(fill="x", padx=10)
-
-        self._add_file_row(file_frame, "输入文件:", self.input_path, 0)
-        self._add_file_row(file_frame, "模板文件:", self.template_path, 1)
-        self._add_file_row(file_frame, "输出位置:", self.output_path, 2)
-
-        log_frame = ctk.CTkFrame(main_frame)
-        log_frame.pack(fill="both", expand=True, padx=10, pady=(15, 10))
-
-        self.log_text = ctk.CTkTextbox(log_frame, font=self._f_log, wrap="word")
-        self.log_text.pack(fill="both", expand=True, padx=2, pady=2)
-
-        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=10, pady=(0, 5))
-
+        btn_bar = ctk.CTkFrame(self, fg_color="transparent")
+        btn_bar.pack(fill="x", padx=20, pady=(0, 10))
         self.mapping_btn = ctk.CTkButton(
-            btn_frame, text="手动调整映射",
-            fg_color=BTN_BLUE, border_width=0,
-            text_color="white",
-            width=130, height=36,
-            font=self._f_label,
-            command=self._on_mapping
-        )
+            btn_bar, text="Manual Mapping", fg_color="transparent",
+            border_width=1.5, border_color=C_PRIMARY, text_color=C_PRIMARY,
+            corner_radius=8, width=140, height=38, font=self._f_label,
+            hover_color=(C_PRIMARY, C_PRIMARY_H), command=self._on_mapping)
         self.mapping_btn.pack(side="left")
-
         self.convert_btn = ctk.CTkButton(
-            btn_frame, text="开始转换",
-            width=120, height=36,
-            font=self._f_label,
-            state="disabled",
-            command=self._on_convert
-        )
+            btn_bar, text="Start Convert", fg_color=C_PRIMARY,
+            hover_color=C_PRIMARY_H, text_color="white", corner_radius=8,
+            width=140, height=38, font=self._f_label,
+            state="disabled", command=self._on_convert)
         self.convert_btn.pack(side="right")
 
-        self.status_var = ctk.StringVar(value="就绪")
-        status_bar = ctk.CTkLabel(
-            self, textvariable=self.status_var,
-            font=ctk.CTkFont(family="SimHei", size=11), anchor="w",
-            fg_color=("gray90", "gray17"),
-            corner_radius=0, height=24
-        )
-        status_bar.pack(fill="x", side="bottom")
+        self.status_var = ctk.StringVar(value="Ready")
+        ctk.CTkLabel(self, textvariable=self.status_var, font=f_status,
+                     anchor="w", fg_color=("gray90", "gray15"),
+                     corner_radius=0, height=22, padx=12
+                     ).pack(fill="x", side="bottom")
 
         self.input_path.trace_add("write", self._on_paths_changed)
         self.template_path.trace_add("write", self._on_paths_changed)
+        self._log("Welcome. Select input and template, then Start Convert.")
 
-        self._log("欢迎使用 DOCX 格式统一工具")
-        self._log('请选择输入文件和模板文件后，点击“开始转换”')
-
-    def _add_file_row(self, parent, label_text, path_var, row):
-        row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        row_frame.pack(fill="x", pady=5)
-
-        label = ctk.CTkLabel(row_frame, text=label_text, width=80, anchor="e",
-                             font=self._f_label)
-        label.pack(side="left", padx=(0, 8))
-
-        entry = ctk.CTkEntry(row_frame, textvariable=path_var,
-                             font=self._f_label)
-        entry.pack(side="left", fill="x", expand=True)
-
-        browse_btn = ctk.CTkButton(
-            row_frame, text="浏览", width=60, height=32,
-            font=self._f_label,
-            command=lambda p=path_var, idx=row: self._on_browse(p, idx)
-        )
-        browse_btn.pack(side="left", padx=(6, 0))
+    def _add_file_row(self, parent, label, path_var, row):
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(fill="x", padx=12, pady=(10 if row == 0 else 6, 10 if row == 2 else 6))
+        ctk.CTkLabel(f, text=label, width=90, anchor="w",
+                     font=self._f_label, text_color=C_TEXT_SUB).pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(f, textvariable=path_var, font=self._f_label,
+                     corner_radius=6, height=34, border_width=1
+                     ).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(f, text="Browse", width=60, height=34, font=self._f_label,
+                      corner_radius=6, fg_color=C_PRIMARY, hover_color=C_PRIMARY_H,
+                      command=lambda p=path_var, i=row: self._on_browse(p, i)
+                      ).pack(side="left", padx=(8, 0))
 
     def _on_browse(self, path_var, row_idx):
         if row_idx == 2:
             path = filedialog.asksaveasfilename(
                 defaultextension=".docx",
-                filetypes=[("DOCX 文件", "*.docx"), ("所有文件", "*.*")],
-                title="选择输出文件保存位置"
-            )
+                filetypes=[("DOCX files", "*.docx"), ("All files", "*.*")],
+                title="Save output as")
         else:
             path = filedialog.askopenfilename(
-                filetypes=[("DOCX 文件", "*.docx"), ("所有文件", "*.*")],
-                title="选择输入文件" if row_idx == 0 else "选择模板文件"
-            )
+                filetypes=[("DOCX files", "*.docx"), ("All files", "*.*")],
+                title="Select input" if row_idx == 0 else "Select template")
         if path:
             path_var.set(path)
             if row_idx == 0 and not self.output_path.get():
-                dir_name = os.path.dirname(path)
-                base = os.path.splitext(os.path.basename(path))[0]
-                suggested = os.path.join(dir_name, base + "_格式化.docx")
-                self.output_path.set(suggested)
+                d = os.path.dirname(path)
+                b = os.path.splitext(os.path.basename(path))[0]
+                self.output_path.set(os.path.join(d, b + "_formatted.docx"))
 
     def _on_paths_changed(self, *args):
-        if self.input_path.get() and self.template_path.get():
-            self.convert_btn.configure(state="normal")
-        else:
-            self.convert_btn.configure(state="disabled")
-        # Reset manual mapping when files change
-        self._cell_config = None
-        self._input_data = None
-        self._tmpl_data = None
+        ok = bool(self.input_path.get() and self.template_path.get())
+        self.convert_btn.configure(state="normal" if ok else "disabled")
+        self._cell_config = self._input_data = self._tmpl_data = None
 
-    # ---- Conversion ----
     def _on_convert(self):
-        input_path = self.input_path.get()
-        tmpl_path = self.template_path.get()
-        output_path = self.output_path.get()
-
-        if not os.path.exists(input_path):
-            messagebox.showerror("错误", "输入文件不存在:\n" + input_path)
-            return
-        if not os.path.exists(tmpl_path):
-            messagebox.showerror("错误", "模板文件不存在:\n" + tmpl_path)
-            return
-        if not output_path:
-            messagebox.showerror("错误", "请指定输出位置")
-            return
-        if not input_path.lower().endswith('.docx'):
-            messagebox.showerror("错误", "输入文件不是 .docx 格式")
-            return
-        if not tmpl_path.lower().endswith('.docx'):
-            messagebox.showerror("错误", "模板文件不是 .docx 格式")
-            return
-
-        # 如果输出文件已存在，先尝试删除（防止被 Word 等程序占用导致保存失败）
-        if os.path.exists(output_path):
-            try:
-                os.remove(output_path)
+        ip = self.input_path.get(); tp = self.template_path.get()
+        op = self.output_path.get()
+        if not os.path.exists(ip): return messagebox.showerror("Error", "Input not found:\n" + ip)
+        if not os.path.exists(tp): return messagebox.showerror("Error", "Template not found:\n" + tp)
+        if not op: return messagebox.showerror("Error", "Specify output path")
+        if not ip.lower().endswith('.docx'): return messagebox.showerror("Error", "Input must be .docx")
+        if not tp.lower().endswith('.docx'): return messagebox.showerror("Error", "Template must be .docx")
+        if os.path.exists(op):
+            try: os.remove(op)
             except PermissionError:
-                messagebox.showerror("错误",
-                    "输出文件被占用，请关闭已打开的输出文件后重试:\n" + output_path)
-                return
+                return messagebox.showerror("Error", "Output is open. Close and retry:\n" + op)
+        self.convert_btn.configure(state="disabled", text="Processing...")
+        self._log("-" * 36)
+        threading.Thread(target=self._run_conversion, args=(ip, tp, op), daemon=True).start()
 
-        self.convert_btn.configure(state="disabled", text="处理中...")
-        self._log("=" * 40)
-
-        thread = threading.Thread(
-            target=self._run_conversion,
-            args=(input_path, tmpl_path, output_path),
-            daemon=True
-        )
-        thread.start()
-
-    def _run_conversion(self, input_path, tmpl_path, output_path):
+    def _run_conversion(self, ip, tp, op):
         try:
-            self._update_status("正在读取文件...")
-            self._log("1/3 正在读取文件...")
-            input_data = read_docx(input_path)
-            tmpl_data = read_docx(tmpl_path)
-
-            self._update_status("正在匹配内容...")
-            self._log("2/3 正在匹配文字和表格...")
-            para_result = match_paragraphs(input_data, tmpl_data)
-            cell_result = match_tables(input_data, tmpl_data,
-                                       cell_config=self._cell_config)
-
-            n_para = len(para_result["para_matches"])
-            n_cell = len(cell_result["cell_matches"])
-            n_unmatched = len(para_result["unmatched_input"])
-            self._log("  段落匹配: %d 对" % n_para)
-            self._log("  表格匹配: %d 对" % n_cell)
-            if n_unmatched > 0:
-                self._log("  未匹配段落: %d (将保留原样)" % n_unmatched)
-            if self._cell_config is not None:
-                n_keep = sum(1 for v in self._cell_config.values() if v is None)
-                self._log("  手动映射: %d 个单元格保留模板" % n_keep)
-
-            self._update_status("正在生成输出文件...")
-            self._log("3/3 正在生成格式化文件...")
-            generate_output(
-                template_path=tmpl_path,
-                input_data=input_data,
-                template_data=tmpl_data,
-                para_matches=para_result["para_matches"],
-                cell_matches=cell_result["cell_matches"],
-                unmatched_paras=para_result["unmatched_input"],
-                output_path=output_path,
-            )
-
-            self._log("转换完成！输出: " + output_path)
-            self._update_status("转换完成")
-
-            self.after(0, lambda: self._on_conversion_done(output_path))
-
+            self._update_status("Reading...")
+            self._log("[1/3] Reading files...")
+            id_ = read_docx(ip); td_ = read_docx(tp)
+            self._update_status("Matching...")
+            self._log("[2/3] Matching...")
+            pr = match_paragraphs(id_, td_)
+            cr = match_tables(id_, td_, cell_config=self._cell_config)
+            self._log("  Paragraphs: %d  |  Cells: %d" % (len(pr["para_matches"]), len(cr["cell_matches"])))
+            if pr["unmatched_input"]:
+                self._log("  Unmatched: %d (kept)" % len(pr["unmatched_input"]))
+            self._update_status("Generating...")
+            self._log("[3/3] Generating...")
+            generate_output(template_path=tp, input_data=id_, template_data=td_,
+                            para_matches=pr["para_matches"], cell_matches=cr["cell_matches"],
+                            unmatched_paras=pr["unmatched_input"], output_path=op)
+            self._log("Done -> " + op)
+            self._update_status("Complete")
+            self.after(0, lambda: self._on_done(op))
         except Exception as e:
-            err_msg = str(e)
-            self._log("错误: " + err_msg)
-            self._update_status("转换失败")
-            self.after(0, lambda msg=err_msg: self._on_conversion_error(msg))
+            m = str(e); self._log("Error: " + m); self._update_status("Failed")
+            self.after(0, lambda msg=m: self._on_error(msg))
 
-    def _on_conversion_done(self, output_path):
-        self.convert_btn.configure(state="normal", text="开始转换")
-        if messagebox.askyesno("转换完成",
-                                "输出文件已保存到:\n" + output_path + "\n\n是否打开文件所在文件夹?"):
-            os.startfile(os.path.dirname(output_path))
+    def _on_done(self, op):
+        self.convert_btn.configure(state="normal", text="Start Convert")
+        if messagebox.askyesno("Complete", "Saved to:\n" + op + "\n\nOpen folder?"):
+            os.startfile(os.path.dirname(op))
 
-    def _on_conversion_error(self, error_msg):
-        self.convert_btn.configure(state="normal", text="开始转换")
-        messagebox.showerror("转换失败", "处理过程中出现错误:\n" + error_msg)
+    def _on_error(self, msg):
+        self.convert_btn.configure(state="normal", text="Start Convert")
+        messagebox.showerror("Error", msg)
 
-    # ---- Manual Mapping ----
     def _on_mapping(self):
-        input_path = self.input_path.get()
-        tmpl_path = self.template_path.get()
+        ip = self.input_path.get(); tp = self.template_path.get()
+        if not ip or not tp: return messagebox.showwarning("Notice", "Select input and template first")
+        if not os.path.exists(ip) or not os.path.exists(tp):
+            return messagebox.showerror("Error", "File not found")
+        if self._input_data is None: self._input_data = read_docx(ip)
+        if self._tmpl_data is None:  self._tmpl_data  = read_docx(tp)
+        cr = match_tables(self._input_data, self._tmpl_data)
+        dlg = MappingDialog(self, self._input_data, self._tmpl_data, cr["cell_matches"])
+        self.wait_window(dlg)
+        if dlg.get_result() is not None:
+            self._cell_config = dlg.get_result()
+            n = sum(1 for v in self._cell_config.values() if v is not None)
+            k = sum(1 for v in self._cell_config.values() if v is None)
+            self._log("Mapping: %d replace, %d keep template" % (n, k))
 
-        if not input_path or not tmpl_path:
-            messagebox.showwarning("提示", "请先选择输入文件和模板文件")
-            return
-        if not os.path.exists(input_path) or not os.path.exists(tmpl_path):
-            messagebox.showerror("错误", "文件不存在，请重新选择")
-            return
+    def _log(self, msg):
+        self.after(0, lambda: self._append(msg))
 
-        # Load files if not already cached
-        if self._input_data is None:
-            self._input_data = read_docx(input_path)
-        if self._tmpl_data is None:
-            self._tmpl_data = read_docx(tmpl_path)
-
-        # Run auto-match to get suggestions
-        auto_result = match_tables(self._input_data, self._tmpl_data)
-        auto_matches = auto_result["cell_matches"]
-
-        # Open mapping dialog
-        dialog = MappingDialog(self, self._input_data, self._tmpl_data, auto_matches)
-        self.wait_window(dialog)
-
-        if dialog.get_result() is not None:
-            self._cell_config = dialog.get_result()
-            n_mapped = sum(1 for v in self._cell_config.values() if v is not None)
-            n_kept = sum(1 for v in self._cell_config.values() if v is None)
-            self._log("手动映射已保存: %d 个替换, %d 个保留模板" % (n_mapped, n_kept))
-
-    # ---- Logging ----
-    def _log(self, message):
-        self.after(0, lambda: self._append_log(message))
-
-    def _append_log(self, message):
-        self.log_text.insert("end", message + "\n")
+    def _append(self, msg):
+        self.log_text.insert("end", msg + "\n")
         self.log_text.see("end")
 
     def _update_status(self, text):

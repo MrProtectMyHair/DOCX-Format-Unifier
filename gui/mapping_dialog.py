@@ -4,10 +4,14 @@
 import customtkinter as ctk
 from tkinter import StringVar
 
-BTN_BLUE = "#1E90FF"
+C_PRIMARY   = "#2563EB"
+C_PRIMARY_H = "#1D4ED8"
+C_BG_CARD   = ("#F8FAFC", "#1E293B")
+C_BORDER    = ("#E2E8F0", "#334155")
+C_TEXT_SUB  = ("#64748B", "#94A3B8")
 
 
-def _safe_font(family="SimHei", size=13, **kwargs):
+def _safe_font(family="Microsoft YaHei", size=13, **kwargs):
     try:
         return ctk.CTkFont(family=family, size=size, **kwargs)
     except Exception:
@@ -98,27 +102,27 @@ class MappingDialog(ctk.CTkToplevel):
         btn_frame.pack(fill="x", padx=12, pady=(0, 10))
 
         ctk.CTkButton(btn_frame, text="自动匹配", width=100, height=32,
-                      fg_color=BTN_BLUE, font=self.font_small,
+                      fg_color=C_PRIMARY, font=self.font_small,
                       command=self._reset_auto).pack(side="left", padx=4)
 
         self._filter_btn = ctk.CTkButton(btn_frame, text="只看已映射", width=100, height=32,
-                                          fg_color=BTN_BLUE, font=self.font_small,
+                                          fg_color=C_PRIMARY, font=self.font_small,
                                           command=self._toggle_filter)
         self._filter_btn.pack(side="left", padx=4)
 
         ctk.CTkButton(btn_frame, text="全部展开", width=100, height=32,
-                      fg_color=BTN_BLUE, font=self.font_small,
+                      fg_color=C_PRIMARY, font=self.font_small,
                       command=lambda: self._expand_all(True)).pack(side="left", padx=4)
 
         ctk.CTkButton(btn_frame, text="全部折叠", width=100, height=32,
-                      fg_color=BTN_BLUE, font=self.font_small,
+                      fg_color=C_PRIMARY, font=self.font_small,
                       command=lambda: self._expand_all(False)).pack(side="left", padx=4)
 
         ctk.CTkButton(btn_frame, text="确认", width=90, height=32,
-                      fg_color=BTN_BLUE, font=self.font_small,
+                      fg_color=C_PRIMARY, font=self.font_small,
                       command=self._on_confirm).pack(side="right", padx=4)
         ctk.CTkButton(btn_frame, text="取消", width=90, height=32,
-                      fg_color=BTN_BLUE, font=self.font_small,
+                      fg_color=C_PRIMARY, font=self.font_small,
                       command=self._on_cancel).pack(side="right", padx=4)
 
     def _populate(self):
